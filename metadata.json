@@ -1,0 +1,7 @@
+{
+  "name": "JoBird Cabinet Selection Assistant",
+  "description": "Internal sales-facing tool for deterministic cabinet selection based on equipment dimensions, environment constraints, and insulation requirements.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
