@@ -3,8 +3,13 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { CabinetModel, Message } from "./types";
 import { SYSTEM_INSTRUCTION } from "./constants";
 
-// Initialize the GoogleGenAI client using the API key strictly from environment variables.
-export const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Initialize the GoogleGenAI client safely.
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+
+if (!ai) {
+  console.error("Gemini API key is missing. Selection engine will be disabled.");
+}
 
 export async function getSelectionResponse(
   userQuery: string,
@@ -42,7 +47,7 @@ export async function generateSelectionSpeech(text: string) {
   } else if (text.includes('INITIAL ASSESSMENT:')) {
     speechText = text.split('CLARIFYING QUESTIONS:')[0].replace('INITIAL ASSESSMENT:', '').trim();
   }
-  
+
   if (!speechText) return null;
 
   // Strip highlight tags for cleaner speech
