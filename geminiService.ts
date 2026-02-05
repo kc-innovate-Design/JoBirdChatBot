@@ -34,7 +34,7 @@ export async function getSelectionResponse(
 
   // 3️⃣ Query GenAI with retrieved context
   const response = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.0-flash',
     contents: [
       {
         role: 'user',
@@ -74,7 +74,7 @@ export async function generateSelectionSpeech(text: string) {
   if (!ai) return null;
 
   const response = await ai.models.generateContent({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.0-flash",
     contents: [{ parts: [{ text: `Recommendation: ${cleanSpeechText}` }] }],
     config: {
       responseModalities: [Modality.AUDIO], // Must be an array with a single Modality.AUDIO element.
