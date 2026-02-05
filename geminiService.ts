@@ -2,6 +2,7 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { CabinetModel, Message } from "./types";
 import { SYSTEM_INSTRUCTION } from "./constants";
+import { searchPdfChunks } from "./lib/supabaseSearch";
 
 // Initialize the GoogleGenAI client safely.
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
@@ -16,22 +17,29 @@ export async function getSelectionResponse(
   history: Message[],
   catalog: CabinetModel[]
 ) {
-  // Use ai.models.generateContent to query GenAI with both the model name and prompt.
+  // 1️⃣ Search Supabase for relevant PDF context
+  const searchResults = await searchPdfChunks(userQuery, 5);
+  const pdfContext = searchResults.map(r => `[Source: ${r.metadata.source}] ${r.content}`).join("\n\n");
+
+  // 2️⃣ Initialize the GoogleGenAI client safely.
   if (!ai) throw new Error("Gemini AI client not initialized");
+
+  // 3️⃣ Query GenAI with retrieved context
   const response = await ai.models.generateContent({
     model: 'gemini-1.5-flash',
     contents: [
       {
         role: 'user',
         parts: [
-          { text: `PRODUCT CATALOG (DETERMINISTIC DATA):\n${JSON.stringify(catalog, null, 2)}` },
+          { text: `TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || "No specific PDF matches found."}` },
+          { text: `PRODUCT CATALOG:\n${JSON.stringify(catalog, null, 2)}` },
           ...history.map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
           { text: `SALES QUERY: ${userQuery}` }
         ]
       }
     ],
     config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
+      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: Base your answers ONLY on the provided TECHNICAL KNOWLEDGE BASE and PRODUCT CATALOG. If the answer is not in the knowledge base, ask the user for more specific details related to the equipment.`,
       temperature: 0.1, // Near zero for deterministic logic
     }
   });
