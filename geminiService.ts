@@ -21,7 +21,6 @@ export function getAI() {
 
 export async function getSelectionResponse(
   userQuery: string,
-  userQuery: string,
   history: Message[]
 ) {
   // 1️⃣ Search Supabase for relevant PDF context
@@ -36,23 +35,23 @@ export async function getSelectionResponse(
   const response = await ai.models.generateContent({
     model: 'gemini-2.0-flash',
     contents: [
-      { text: `TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || "No specific PDF matches found."}` },
-      ...history.map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
-      { text: `SALES QUERY: ${userQuery}` }
-    ]
-  }
+      {
+        role: 'user',
+        parts: [
+          { text: `TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || "No specific PDF matches found."}` },
+          ...history.map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
+          { text: `SALES QUERY: ${userQuery}` }
+        ]
+      }
     ],
-  config: {
     config: {
       systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth. You MUST use the KNOWLEDGE BASE details for all product specifications.`,
-        temperature: 0.1, // Near zero for deterministic logic
+      temperature: 0.1, // Near zero for deterministic logic
     }
-    temperature: 0.1, // Near zero for deterministic logic
-    }
-});
+  });
 
-// Extract generated text content directly from the .text property.
-return response.text || "Selection engine failed to compute. Please check inputs.";
+  // Extract generated text content directly from the .text property.
+  return response.text || "Selection engine failed to compute. Please check inputs.";
 }
 
 export async function generateSelectionSpeech(text: string) {
