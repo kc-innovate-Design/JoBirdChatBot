@@ -108,6 +108,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
     }
 
     try {
+      const ai = getAI();
       if (!ai) {
         setMessages(prev => [...prev, { role: 'assistant', content: "Voice mode is unavailable because the API key is not configured.", timestamp: new Date() }]);
         setIsLiveMode(false);
@@ -143,7 +144,8 @@ VOICE MODE SPECIFIC:
 3. However, ensure the transcriptions you generate follow the mandatory section labels (RECOMMENDED CABINET:, INITIAL ASSESSMENT:, etc.) so the UI can format them.
 4. If you suggest a cabinet, say its name clearly.`;
 
-      const sessionPromise = (ai as any).live.connect({
+      const aiInstance = getAI();
+      const sessionPromise = (aiInstance as any).live.connect({
         model: 'gemini-2.0-flash-exp', // Standard model for Live API
         callbacks: {
           onopen: () => {
@@ -266,6 +268,7 @@ VOICE MODE SPECIFIC:
     setInput('');
     setIsLoading(true);
     try {
+      const ai = getAI();
       if (!ai) throw new Error("Gemini AI client not initialized");
       const response = await getSelectionResponse(input, messages, catalog);
       const botMsg: Message = { role: 'assistant', content: response, timestamp: new Date() };
