@@ -21,8 +21,8 @@ export function getAI() {
 
 export async function getSelectionResponse(
   userQuery: string,
-  history: Message[],
-  catalog: CabinetModel[]
+  userQuery: string,
+  history: Message[]
 ) {
   // 1️⃣ Search Supabase for relevant PDF context
   const searchResults = await searchPdfChunks(userQuery, 5);
@@ -36,24 +36,23 @@ export async function getSelectionResponse(
   const response = await ai.models.generateContent({
     model: 'gemini-2.0-flash',
     contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: `PRODUCT CATALOG:\n${JSON.stringify(catalog, null, 2)}` },
-          { text: `TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || "No specific PDF matches found."}` },
-          ...history.map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
-          { text: `SALES QUERY: ${userQuery}` }
-        ]
-      }
+      { text: `TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || "No specific PDF matches found."}` },
+      ...history.map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
+      { text: `SALES QUERY: ${userQuery}` }
+    ]
+  }
     ],
+  config: {
     config: {
-      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: The TECHNICAL KNOWLEDGE BASE is the PRIMARY source of truth. If the user asks about a specific model (e.g., 'JB02HR') that appears in the KNOWLEDGE BASE but not the CATALOG, you MUST use the KNOWLEDGE BASE details and IGNORE the missing entry in the catalog. Do not say you don't have information if it exists in the KNOWLEDGE BASE.`,
-      temperature: 0.1, // Near zero for deterministic logic
+      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth. You MUST use the KNOWLEDGE BASE details for all product specifications.`,
+        temperature: 0.1, // Near zero for deterministic logic
     }
-  });
+    temperature: 0.1, // Near zero for deterministic logic
+    }
+});
 
-  // Extract generated text content directly from the .text property.
-  return response.text || "Selection engine failed to compute. Please check inputs.";
+// Extract generated text content directly from the .text property.
+return response.text || "Selection engine failed to compute. Please check inputs.";
 }
 
 export async function generateSelectionSpeech(text: string) {

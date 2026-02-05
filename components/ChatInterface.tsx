@@ -270,7 +270,7 @@ VOICE MODE SPECIFIC:
     try {
       const sendAi = getAI();
       if (!sendAi) throw new Error("Gemini AI client not initialized");
-      const response = await getSelectionResponse(input, messages, catalog);
+      const response = await getSelectionResponse(input, messages);
       const botMsg: Message = { role: 'assistant', content: response, timestamp: new Date() };
       setMessages(prev => [...prev, botMsg]);
     } catch (error: any) {
