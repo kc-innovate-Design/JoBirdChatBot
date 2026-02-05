@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Message, CabinetModel, SOP, SalesFeedback } from '../types';
-import { getSelectionResponse, generateSelectionSpeech, ai } from '../geminiService';
+import { getSelectionResponse, generateSelectionSpeech, getAI } from '../geminiService';
 import { SYSTEM_INSTRUCTION } from '../constants';
 import { Modality, LiveServerMessage, Blob } from '@google/genai';
 
@@ -161,9 +161,12 @@ VOICE MODE SPECIFIC:
                 data: encode(new Uint8Array(int16.buffer)),
                 mimeType: 'audio/pcm;rate=16000',
               };
-              sessionPromise.then((session) => {
-                session.sendRealtimeInput({ media: pcmBlob });
-              });
+              const ai = getAI();
+              if (ai) {
+                sessionPromise.then((session) => {
+                  session.sendRealtimeInput({ media: pcmBlob });
+                });
+              }
             };
             source.connect(scriptProcessor);
             scriptProcessor.connect(inputCtx.destination);
@@ -225,6 +228,8 @@ VOICE MODE SPECIFIC:
         },
       });
 
+      const ai = getAI();
+      if (!ai) throw new Error("AI not initialized");
       liveSessionRef.current = await sessionPromise;
     } catch (err) {
       console.error('Failed to start live mode:', err);
@@ -410,8 +415,8 @@ VOICE MODE SPECIFIC:
           <button
             onClick={startLiveMode}
             className={`w-[48px] h-[48px] flex-shrink-0 flex items-center justify-center transition-all ${isLiveMode
-                ? 'bg-jobird-red text-white animate-pulse shadow-[0_0_15px_rgba(217,60,35,0.4)]'
-                : 'bg-white border border-slate-200 text-slate-400 hover:text-jobird-red'
+              ? 'bg-jobird-red text-white animate-pulse shadow-[0_0_15px_rgba(217,60,35,0.4)]'
+              : 'bg-white border border-slate-200 text-slate-400 hover:text-jobird-red'
               }`}
             title={isLiveMode ? "Stop Voice Mode" : "Start Voice Mode"}
           >
