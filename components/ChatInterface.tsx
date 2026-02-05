@@ -65,7 +65,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
   const [isSpeaking, setIsSpeaking] = useState<number | null>(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(false);
-  
+
   const [feedbackTask, setFeedbackTask] = useState('');
   const [feedbackIssue, setFeedbackIssue] = useState('');
   const [feedbackUrgency, setFeedbackUrgency] = useState<'Low' | 'Medium' | 'High'>('Medium');
@@ -95,7 +95,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
       inputAudioContextRef.current = null;
     }
     for (const source of audioSourcesRef.current) {
-      try { source.stop(); } catch(e) {}
+      try { source.stop(); } catch (e) { }
     }
     audioSourcesRef.current.clear();
     setIsLiveMode(false);
@@ -108,12 +108,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
     }
 
     try {
+      if (!ai) {
+        setMessages(prev => [...prev, { role: 'assistant', content: "Voice mode is unavailable because the API key is not configured.", timestamp: new Date() }]);
+        setIsLiveMode(false);
+        return;
+      }
+
       setIsLiveMode(true);
+
+      // Ensure AudioContext is created/resumed on user gesture
+      if (!inputAudioContextRef.current) {
+        inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      }
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      }
+
+      const inputCtx = inputAudioContextRef.current;
+      const outputCtx = audioContextRef.current;
+
+      if (inputCtx.state === 'suspended') await inputCtx.resume();
+      if (outputCtx.state === 'suspended') await outputCtx.resume();
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      inputAudioContextRef.current = inputCtx;
-      audioContextRef.current = outputCtx;
 
       const enhancedInstruction = `${SYSTEM_INSTRUCTION}
       
@@ -126,10 +143,11 @@ VOICE MODE SPECIFIC:
 3. However, ensure the transcriptions you generate follow the mandatory section labels (RECOMMENDED CABINET:, INITIAL ASSESSMENT:, etc.) so the UI can format them.
 4. If you suggest a cabinet, say its name clearly.`;
 
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+      const sessionPromise = (ai as any).live.connect({
+        model: 'gemini-2.0-flash-exp', // Standard model for Live API
         callbacks: {
           onopen: () => {
+            console.log("Live session connected");
             const source = inputCtx.createMediaStreamSource(stream);
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             scriptProcessor.onaudioprocess = (e) => {
@@ -187,7 +205,7 @@ VOICE MODE SPECIFIC:
 
             if (message.serverContent?.interrupted) {
               for (const source of audioSourcesRef.current) {
-                try { source.stop(); } catch(e) {}
+                try { source.stop(); } catch (e) { }
               }
               audioSourcesRef.current.clear();
               nextStartTimeRef.current = 0;
@@ -243,11 +261,17 @@ VOICE MODE SPECIFIC:
     setInput('');
     setIsLoading(true);
     try {
+      if (!ai) throw new Error("Gemini AI client not initialized");
       const response = await getSelectionResponse(input, messages, catalog);
       const botMsg: Message = { role: 'assistant', content: response, timestamp: new Date() };
       setMessages(prev => [...prev, botMsg]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: "I am having difficulty processing that request. Please try again with simplified requirements.", timestamp: new Date() }]);
+    } catch (error: any) {
+      console.error("Selection Error:", error);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `Service Error: ${error.message || "I am having difficulty processing that request. Please verify the API key."}`,
+        timestamp: new Date()
+      }]);
     } finally {
       setIsLoading(false);
     }
@@ -272,7 +296,7 @@ VOICE MODE SPECIFIC:
   const handleExportChat = () => {
     const header = `JoBird Cabinet Selection Export\nGenerated: ${new Date().toLocaleString()}\n\n`;
     const separator = "\n--------------------------------------------------\n";
-    
+
     const content = messages.map(msg => {
       const timestamp = msg.timestamp.toLocaleString();
       const role = msg.role.toUpperCase();
@@ -319,8 +343,8 @@ VOICE MODE SPECIFIC:
               )}
               <div className="text-[12px] leading-relaxed whitespace-pre-wrap font-medium text-slate-800">
                 {body.split(highlightRegex).map((part, i) => {
-                    if (i % 2 === 1) return <span key={i} className="text-jobird-red font-black px-1 uppercase">{part}</span>;
-                    return part;
+                  if (i % 2 === 1) return <span key={i} className="text-jobird-red font-black px-1 uppercase">{part}</span>;
+                  return part;
                 })}
               </div>
             </div>
@@ -343,23 +367,20 @@ VOICE MODE SPECIFIC:
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[90%] flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse text-right' : 'flex-row'}`}>
-              <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center border-2 text-xs ${
-                msg.role === 'user' ? 'bg-white border-slate-200 text-slate-400' : 'bg-jobird-red border-jobird-red text-white'
-              }`}>
+              <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center border-2 text-xs ${msg.role === 'user' ? 'bg-white border-slate-200 text-slate-400' : 'bg-jobird-red border-jobird-red text-white'
+                }`}>
                 <i className={`fas ${msg.role === 'user' ? 'fa-user-tie' : 'fa-robot'}`}></i>
               </div>
               <div className="relative group">
-                <div className={`p-4 border ${
-                  msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
-                }`}>
+                <div className={`p-4 border ${msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
+                  }`}>
                   {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[13px] font-bold">{msg.content}</div>}
                 </div>
                 {msg.role === 'assistant' && !isLiveMode && (msg.content.includes('RECOMMENDED CABINET') || msg.content.includes('INITIAL ASSESSMENT')) && (
-                  <button 
+                  <button
                     onClick={() => handlePlayAudio(msg.content, idx)}
-                    className={`mt-2 w-full bg-slate-100 py-1.5 text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-jobird-red hover:text-white transition-all ${
-                      isSpeaking === idx ? 'bg-jobird-red text-white animate-pulse' : ''
-                    }`}
+                    className={`mt-2 w-full bg-slate-100 py-1.5 text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-jobird-red hover:text-white transition-all ${isSpeaking === idx ? 'bg-jobird-red text-white animate-pulse' : ''
+                      }`}
                   >
                     <i className={`fas ${isSpeaking === idx ? 'fa-volume-high' : 'fa-volume-low'}`}></i>
                     Listen to Recommendation
@@ -371,7 +392,7 @@ VOICE MODE SPECIFIC:
         ))}
         {isLoading && !isLiveMode && (
           <div className="flex justify-start">
-             <div className="flex gap-3">
+            <div className="flex gap-3">
               <div className="w-8 h-8 bg-jobird-red flex items-center justify-center text-white text-xs">
                 <i className="fas fa-gear animate-spin"></i>
               </div>
@@ -386,13 +407,12 @@ VOICE MODE SPECIFIC:
       {/* Input Area */}
       <div className="p-5 border-t border-slate-100 bg-jobird-lightGrey">
         <div className="flex gap-3 items-center">
-          <button 
+          <button
             onClick={startLiveMode}
-            className={`w-[48px] h-[48px] flex-shrink-0 flex items-center justify-center transition-all ${
-              isLiveMode 
-                ? 'bg-jobird-red text-white animate-pulse shadow-[0_0_15px_rgba(217,60,35,0.4)]' 
+            className={`w-[48px] h-[48px] flex-shrink-0 flex items-center justify-center transition-all ${isLiveMode
+                ? 'bg-jobird-red text-white animate-pulse shadow-[0_0_15px_rgba(217,60,35,0.4)]'
                 : 'bg-white border border-slate-200 text-slate-400 hover:text-jobird-red'
-            }`}
+              }`}
             title={isLiveMode ? "Stop Voice Mode" : "Start Voice Mode"}
           >
             <i className={`fas ${isLiveMode ? 'fa-microphone' : 'fa-microphone-slash'} text-lg`}></i>
@@ -415,21 +435,21 @@ VOICE MODE SPECIFIC:
           </button>
         </div>
         <div className="flex justify-center gap-6 mt-4">
-          <button 
+          <button
             onClick={onOpenAdmin}
             className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
           >
             <i className="fas fa-lock"></i>
             Admin panel
           </button>
-          <button 
+          <button
             onClick={() => setShowFeedbackModal(true)}
             className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
           >
             <i className="fas fa-flag"></i>
             Feedback
           </button>
-          <button 
+          <button
             onClick={handleExportChat}
             className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
           >
@@ -450,11 +470,11 @@ VOICE MODE SPECIFIC:
               <div className="p-6 space-y-4">
                 <div>
                   <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Document / SOP Reference</label>
-                  <input required value={feedbackTask} onChange={e => setFeedbackTask(e.target.value)} placeholder="e.g. JB08 clearance" className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 font-bold text-xs outline-none focus:border-jobird-red"/>
+                  <input required value={feedbackTask} onChange={e => setFeedbackTask(e.target.value)} placeholder="e.g. JB08 clearance" className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 font-bold text-xs outline-none focus:border-jobird-red" />
                 </div>
                 <div>
                   <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Details of Issue</label>
-                  <textarea required value={feedbackIssue} onChange={e => setFeedbackIssue(e.target.value)} rows={3} placeholder="Describe issue..." className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 text-xs font-medium outline-none focus:border-jobird-red"/>
+                  <textarea required value={feedbackIssue} onChange={e => setFeedbackIssue(e.target.value)} rows={3} placeholder="Describe issue..." className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 text-xs font-medium outline-none focus:border-jobird-red" />
                 </div>
                 <div>
                   <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Priority</label>
@@ -464,9 +484,8 @@ VOICE MODE SPECIFIC:
                         key={u}
                         type="button"
                         onClick={() => setFeedbackUrgency(u)}
-                        className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest transition-all ${
-                          feedbackUrgency === u ? 'bg-jobird-red text-white' : 'bg-jobird-lightGrey text-slate-400 border border-slate-200'
-                        }`}
+                        className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest transition-all ${feedbackUrgency === u ? 'bg-jobird-red text-white' : 'bg-jobird-lightGrey text-slate-400 border border-slate-200'
+                          }`}
                       >
                         {u}
                       </button>

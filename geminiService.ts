@@ -17,8 +17,9 @@ export async function getSelectionResponse(
   catalog: CabinetModel[]
 ) {
   // Use ai.models.generateContent to query GenAI with both the model name and prompt.
+  if (!ai) throw new Error("Gemini AI client not initialized");
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-1.5-flash',
     contents: [
       {
         role: 'user',
@@ -53,8 +54,10 @@ export async function generateSelectionSpeech(text: string) {
   // Strip highlight tags for cleaner speech
   const cleanSpeechText = speechText.replace(/\[\[HIGHLIGHT\]\]/g, '').replace(/\[\[\/HIGHLIGHT\]\]/g, '');
 
+  if (!ai) return null;
+
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
+    model: "gemini-1.5-flash",
     contents: [{ parts: [{ text: `Recommendation: ${cleanSpeechText}` }] }],
     config: {
       responseModalities: [Modality.AUDIO], // Must be an array with a single Modality.AUDIO element.
