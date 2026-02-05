@@ -108,8 +108,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
     }
 
     try {
-      const ai = getAI();
-      if (!ai) {
+      const aiClient = getAI();
+      if (!aiClient) {
         setMessages(prev => [...prev, { role: 'assistant', content: "Voice mode is unavailable because the API key is not configured.", timestamp: new Date() }]);
         setIsLiveMode(false);
         return;
@@ -163,8 +163,8 @@ VOICE MODE SPECIFIC:
                 data: encode(new Uint8Array(int16.buffer)),
                 mimeType: 'audio/pcm;rate=16000',
               };
-              const ai = getAI();
-              if (ai) {
+              const currentAi = getAI();
+              if (currentAi) {
                 sessionPromise.then((session) => {
                   session.sendRealtimeInput({ media: pcmBlob });
                 });
@@ -230,8 +230,8 @@ VOICE MODE SPECIFIC:
         },
       });
 
-      const ai = getAI();
-      if (!ai) throw new Error("AI not initialized");
+      const aiClient = getAI();
+      if (!aiClient) throw new Error("AI not initialized");
       liveSessionRef.current = await sessionPromise;
     } catch (err) {
       console.error('Failed to start live mode:', err);
@@ -268,8 +268,8 @@ VOICE MODE SPECIFIC:
     setInput('');
     setIsLoading(true);
     try {
-      const ai = getAI();
-      if (!ai) throw new Error("Gemini AI client not initialized");
+      const aiClient = getAI();
+      if (!aiClient) throw new Error("Gemini AI client not initialized");
       const response = await getSelectionResponse(input, messages, catalog);
       const botMsg: Message = { role: 'assistant', content: response, timestamp: new Date() };
       setMessages(prev => [...prev, botMsg]);
