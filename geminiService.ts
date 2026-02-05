@@ -47,7 +47,7 @@ export async function getSelectionResponse(
       }
     ],
     config: {
-      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: Base your answers ONLY on the provided TECHNICAL KNOWLEDGE BASE and PRODUCT CATALOG. If the answer is not in the knowledge base, ask the user for more specific details related to the equipment.`,
+      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: The TECHNICAL KNOWLEDGE BASE contains the most accurate and up-to-date specifications for specific models (like 'jb02hr'). ALWAYS use the information from the KNOWLEDGE BASE to supplement or override the PRODUCT CATALOG if there is a conflict or if the KNOWLEDGE BASE is more specific. If the answer is not in the Knowledge Base or Catalog, then ask for details.`,
       temperature: 0.1, // Near zero for deterministic logic
     }
   });
