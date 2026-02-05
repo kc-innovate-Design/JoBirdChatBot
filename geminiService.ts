@@ -39,15 +39,15 @@ export async function getSelectionResponse(
       {
         role: 'user',
         parts: [
-          { text: `TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || "No specific PDF matches found."}` },
           { text: `PRODUCT CATALOG:\n${JSON.stringify(catalog, null, 2)}` },
+          { text: `TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || "No specific PDF matches found."}` },
           ...history.map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
           { text: `SALES QUERY: ${userQuery}` }
         ]
       }
     ],
     config: {
-      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: The TECHNICAL KNOWLEDGE BASE contains the most accurate and up-to-date specifications for specific models (like 'jb02hr'). ALWAYS use the information from the KNOWLEDGE BASE to supplement or override the PRODUCT CATALOG if there is a conflict or if the KNOWLEDGE BASE is more specific. If the answer is not in the Knowledge Base or Catalog, then ask for details.`,
+      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: The TECHNICAL KNOWLEDGE BASE is the PRIMARY source of truth. If the user asks about a specific model (e.g., 'JB02HR') that appears in the KNOWLEDGE BASE but not the CATALOG, you MUST use the KNOWLEDGE BASE details and IGNORE the missing entry in the catalog. Do not say you don't have information if it exists in the KNOWLEDGE BASE.`,
       temperature: 0.1, // Near zero for deterministic logic
     }
   });
