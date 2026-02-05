@@ -108,8 +108,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
     }
 
     try {
-      const aiClient = getAI();
-      if (!aiClient) {
+      const liveAi = getAI();
+      if (!liveAi) {
         setMessages(prev => [...prev, { role: 'assistant', content: "Voice mode is unavailable because the API key is not configured.", timestamp: new Date() }]);
         setIsLiveMode(false);
         return;
@@ -230,8 +230,8 @@ VOICE MODE SPECIFIC:
         },
       });
 
-      const aiClient = getAI();
-      if (!aiClient) throw new Error("AI not initialized");
+      const sessionAi = getAI();
+      if (!sessionAi) throw new Error("AI not initialized");
       liveSessionRef.current = await sessionPromise;
     } catch (err) {
       console.error('Failed to start live mode:', err);
@@ -268,8 +268,8 @@ VOICE MODE SPECIFIC:
     setInput('');
     setIsLoading(true);
     try {
-      const aiClient = getAI();
-      if (!aiClient) throw new Error("Gemini AI client not initialized");
+      const sendAi = getAI();
+      if (!sendAi) throw new Error("Gemini AI client not initialized");
       const response = await getSelectionResponse(input, messages, catalog);
       const botMsg: Message = { role: 'assistant', content: response, timestamp: new Date() };
       setMessages(prev => [...prev, botMsg]);
