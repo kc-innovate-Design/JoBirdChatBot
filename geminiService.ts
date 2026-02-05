@@ -3,13 +3,20 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { CabinetModel, Message } from "./types";
 import { SYSTEM_INSTRUCTION } from "./constants";
 import { searchPdfChunks } from "./lib/supabaseSearch";
+import { getConfig } from "./lib/config";
 
-// Initialize the GoogleGenAI client safely.
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
-export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+// Initialize the GoogleGenAI client lazily.
+let aiInstance: GoogleGenAI | null = null;
 
-if (!ai) {
-  console.error("Gemini API key is missing. Selection engine will be disabled.");
+export function getAI() {
+  if (aiInstance) return aiInstance;
+  const config = getConfig();
+  const apiKey = config.VITE_GEMINI_API_KEY || "";
+  aiInstance = apiKey ? new GoogleGenAI({ apiKey }) : null;
+  if (!aiInstance) {
+    console.error("Gemini API key is missing. Selection engine will be disabled.");
+  }
+  return aiInstance;
 }
 
 export async function getSelectionResponse(
@@ -22,6 +29,7 @@ export async function getSelectionResponse(
   const pdfContext = searchResults.map(r => `[Source: ${r.metadata.source}] ${r.content}`).join("\n\n");
 
   // 2️⃣ Initialize the GoogleGenAI client safely.
+  const ai = getAI();
   if (!ai) throw new Error("Gemini AI client not initialized");
 
   // 3️⃣ Query GenAI with retrieved context
@@ -62,6 +70,7 @@ export async function generateSelectionSpeech(text: string) {
   // Strip highlight tags for cleaner speech
   const cleanSpeechText = speechText.replace(/\[\[HIGHLIGHT\]\]/g, '').replace(/\[\[\/HIGHLIGHT\]\]/g, '');
 
+  const ai = getAI();
   if (!ai) return null;
 
   const response = await ai.models.generateContent({

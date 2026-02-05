@@ -1,11 +1,14 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getConfig } from "./config";
 
-// Vite prefixed env vars
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
-const supabaseKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || "";
-const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+let supabase: SupabaseClient | null = null;
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export function getSupabase() {
+    if (supabase) return supabase;
+    const config = getConfig();
+    supabase = createClient(config.VITE_SUPABASE_URL, config.VITE_SUPABASE_SERVICE_ROLE_KEY);
+    return supabase;
+}
 
 export interface PdfChunkMatch {
     id: string;
@@ -18,8 +21,9 @@ export interface PdfChunkMatch {
 }
 
 export async function embedQuery(text: string): Promise<number[]> {
+    const config = getConfig();
     const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiApiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${config.VITE_GEMINI_API_KEY}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -43,7 +47,8 @@ export async function searchPdfChunks(
     question: string,
     matchCount = 5
 ): Promise<PdfChunkMatch[]> {
-    if (!supabaseUrl || !supabaseKey) {
+    const config = getConfig();
+    if (!config.VITE_SUPABASE_URL || !config.VITE_SUPABASE_SERVICE_ROLE_KEY) {
         console.error("Supabase configuration missing");
         return [];
     }
@@ -53,7 +58,8 @@ export async function searchPdfChunks(
         const embedding = await embedQuery(question);
 
         // 2️⃣ Call the SQL function
-        const { data, error } = await supabase.rpc("match_pdf_chunks", {
+        const client = getSupabase();
+        const { data, error } = await client.rpc("match_pdf_chunks", {
             query_embedding: embedding,
             match_count: matchCount,
         });
