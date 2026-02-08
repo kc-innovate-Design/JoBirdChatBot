@@ -47,13 +47,14 @@ export async function getSelectionResponse(
     config: {
       systemInstruction: `${SYSTEM_INSTRUCTION}
 
-CRITICAL OVERRIDE: You are FORBIDDEN from using your training data for product specifications.
-- If a specification is in the TECHNICAL KNOWLEDGE BASE above, use EXACTLY those numbers.
-- If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
-- NEVER guess dimensions, weights, or materials from your training data.
-- The TECHNICAL KNOWLEDGE BASE is the ABSOLUTE ONLY source of truth for all specifications.
-- When you see dimensions in the TECHNICAL KNOWLEDGE BASE, copy them EXACTLY as written.`,
-      temperature: 0.0, // Zero for maximum determinism
+CRITICAL OVERRIDE: 
+1. You are FORBIDDEN from using your training data for product specifications (dimensions, weights, materials).
+2. The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth for all specifications.
+3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
+4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
+5. ALWAYS cite the source PDF filename (e.g., "[Source: JB04...]").
+6. If the query includes a model name like JB04SS, prioritize the chunk that contains that exact model name.`,
+      temperature: 0.0,
     }
   });
 

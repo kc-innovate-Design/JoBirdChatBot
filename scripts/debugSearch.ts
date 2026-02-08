@@ -49,10 +49,11 @@ async function embedText(text: string): Promise<number[]> {
 async function debug() {
     console.error("--- DEBUG START ---");
 
+    const query = process.argv[2] || "JB02HR specifications dimensions";
+
     // 2. Perform Vector Search
-    console.error("\nPerforming Vector Search for 'JB02HR specifications dimensions'...");
+    console.error(`\nPerforming Vector Search for '${query}'...`);
     try {
-        const query = "JB02HR specifications dimensions";
         const embedding = await embedText(query);
 
         const { data: vectorMatches, error: rpcError } = await supabase.rpc("match_pdf_chunks", {
