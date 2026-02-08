@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getConfig } from "./config";
+import { embedQuery } from "./embedQuery";
 
 let supabase: SupabaseClient | null = null;
 
@@ -20,28 +21,6 @@ export interface PdfChunkMatch {
     similarity: number;
 }
 
-export async function embedQuery(text: string): Promise<number[]> {
-    const config = getConfig();
-    const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${config.VITE_GEMINI_API_KEY}`,
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                content: { parts: [{ text }] },
-            }),
-        }
-    );
-
-    const json = await res.json();
-
-    if (!json.embedding?.values) {
-        console.error("Embedding API Error:", json);
-        throw new Error("Failed to embed query. Please check API key and internet connection.");
-    }
-
-    return json.embedding.values;
-}
 
 export async function searchPdfChunks(
     question: string,

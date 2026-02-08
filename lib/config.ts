@@ -9,6 +9,7 @@ export interface AppConfig {
     VITE_GEMINI_API_KEY: string;
     VITE_SUPABASE_URL: string;
     VITE_SUPABASE_SERVICE_ROLE_KEY: string;
+    VITE_APP_PASSWORD: string;
 }
 
 let config: AppConfig | null = null;
@@ -33,6 +34,7 @@ export async function loadConfig(): Promise<AppConfig> {
                 VITE_GEMINI_API_KEY: runtimeConfig.VITE_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY,
                 VITE_SUPABASE_URL: runtimeConfig.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL,
                 VITE_SUPABASE_SERVICE_ROLE_KEY: runtimeConfig.VITE_SUPABASE_SERVICE_ROLE_KEY || import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
+                VITE_APP_PASSWORD: runtimeConfig.VITE_APP_PASSWORD || import.meta.env.VITE_APP_PASSWORD || 'jobird2026',
             };
             console.log("Runtime configuration loaded");
         }
@@ -52,6 +54,7 @@ export async function loadConfig(): Promise<AppConfig> {
             VITE_GEMINI_API_KEY: import.meta.env.VITE_GEMINI_API_KEY,
             VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
             VITE_SUPABASE_SERVICE_ROLE_KEY: import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
+            VITE_APP_PASSWORD: import.meta.env.VITE_APP_PASSWORD || 'jobird2026',
         };
     }
 

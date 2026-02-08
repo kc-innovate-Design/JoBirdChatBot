@@ -18,52 +18,41 @@ if (!supabaseUrl || !supabaseKey || !geminiKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function embedText(text: string): Promise<number[]> {
-    console.log(`Embedding: "${text}"`);
+    console.error(`Embedding: "${text}"`);
     const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${geminiKey}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 content: { parts: [{ text }] },
+                outputDimensionality: 768
             }),
         }
     );
+
+    if (!res.ok) {
+        const errorText = await res.text();
+        console.error(`API Error: ${res.status} ${res.statusText}`);
+        console.error(`Response Body: ${errorText}`);
+        throw new Error(`Embedding API failed with status ${res.status}`);
+    }
+
     const json = await res.json();
     if (!json.embedding?.values) {
-        console.error("Embedding response:", JSON.stringify(json, null, 2));
-        throw new Error("Embedding failed");
+        console.error("Embedding response structure invalid:", JSON.stringify(json, null, 2));
+        throw new Error("Embedding failed - no values returned");
     }
     return json.embedding.values;
 }
 
 async function debug() {
-    console.log("--- DEBUG START ---");
-
-    // 1. Check if 'jb02hr' exists in raw text
-    console.log("Checking for 'jb02' text in chunks...");
-    const { data: textMatches, error: textError } = await supabase
-        .from('pdf_chunks')
-        .select('id, content, metadata')
-        .ilike('content', '%jb02%')
-        .limit(3);
-
-    if (textError) {
-        console.error("Text search error:", textError);
-    } else {
-        console.log(`\n*** FOUND ${textMatches?.length || 0} TEXT MATCHES FOR 'jb02' ***`);
-        // Force output even if empty
-        if (!textMatches || textMatches.length === 0) {
-            console.log("No chunks contain 'jb02'. The data is DEFINITELY NOT in Supabase.");
-        } else {
-            textMatches.forEach(m => console.log(`- MATCH [${m.id}]: ${m.content.substring(0, 50)}...`));
-        }
-    }
+    console.error("--- DEBUG START ---");
 
     // 2. Perform Vector Search
-    console.log("\nPerforming Vector Search for 'jb02hr details'...");
+    console.error("\nPerforming Vector Search for 'JB02HR specifications dimensions'...");
     try {
-        const query = "jb02hr details";
+        const query = "JB02HR specifications dimensions";
         const embedding = await embedText(query);
 
         const { data: vectorMatches, error: rpcError } = await supabase.rpc("match_pdf_chunks", {
@@ -74,11 +63,17 @@ async function debug() {
         if (rpcError) {
             console.error("RPC Error:", rpcError);
         } else {
-            console.log(`\n*** VECTOR SEARCH RETURNED ${vectorMatches.length} RESULTS ***`);
-            vectorMatches.forEach((m: any) => {
-                console.log(`\n[Similarity: ${m.similarity.toFixed(4)}] Source: ${m.metadata.source}`);
-                console.log(`Content: ${m.content.substring(0, 150)}...`);
-            });
+            console.error(`\n*** VECTOR SEARCH RETURNED ${vectorMatches?.length} RESULTS ***`);
+
+            if (!vectorMatches || !Array.isArray(vectorMatches)) {
+                console.error("CRITICAL: vectorMatches is NULL or not an array!");
+            } else {
+                vectorMatches.forEach((m: any, index: number) => {
+                    console.log(`\n--- RESULT ${index + 1} [Sim: ${m.similarity.toFixed(4)}] Source: ${m.metadata.source} ---`);
+                    console.log(m.content);
+                    console.log("----------------------------------------------------------------");
+                });
+            }
         }
 
     } catch (e) {

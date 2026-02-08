@@ -33,7 +33,7 @@ export async function getSelectionResponse(
 
   // 3️⃣ Query GenAI with retrieved context
   const response = await ai.models.generateContent({
-    model: 'gemini-2.0-flash',
+    model: 'models/gemini-2.0-flash',
     contents: [
       {
         role: 'user',
@@ -45,8 +45,15 @@ export async function getSelectionResponse(
       }
     ],
     config: {
-      systemInstruction: `${SYSTEM_INSTRUCTION}\n\nSTRICT REQUIREMENT: The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth. You MUST use the KNOWLEDGE BASE details for all product specifications.`,
-      temperature: 0.1, // Near zero for deterministic logic
+      systemInstruction: `${SYSTEM_INSTRUCTION}
+
+CRITICAL OVERRIDE: You are FORBIDDEN from using your training data for product specifications.
+- If a specification is in the TECHNICAL KNOWLEDGE BASE above, use EXACTLY those numbers.
+- If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
+- NEVER guess dimensions, weights, or materials from your training data.
+- The TECHNICAL KNOWLEDGE BASE is the ABSOLUTE ONLY source of truth for all specifications.
+- When you see dimensions in the TECHNICAL KNOWLEDGE BASE, copy them EXACTLY as written.`,
+      temperature: 0.0, // Zero for maximum determinism
     }
   });
 
@@ -72,7 +79,7 @@ export async function generateSelectionSpeech(text: string) {
   if (!ai) return null;
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: "models/gemini-2.0-flash",
     contents: [{ parts: [{ text: `Recommendation: ${cleanSpeechText}` }] }],
     config: {
       responseModalities: [Modality.AUDIO], // Must be an array with a single Modality.AUDIO element.

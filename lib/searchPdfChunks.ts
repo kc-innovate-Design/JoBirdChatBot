@@ -6,8 +6,8 @@ import { embedQuery } from "./embedQuery";
 dotenv.config(); // ✅ MUST be before createClient
 
 const supabase = createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 export interface PdfChunkMatch {

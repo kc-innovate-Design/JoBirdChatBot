@@ -18,7 +18,7 @@ dotenv.config();
 const REQUIRED_ENVS = [
     "VITE_SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
-    "GEMINI_API_KEY",
+    "VITE_GEMINI_API_KEY",
 ];
 
 for (const key of REQUIRED_ENVS) {
@@ -38,7 +38,7 @@ const supabase = createClient(
 /* ------------------------------------------------------------------ */
 /* TEXT CHUNKING                                                       */
 /* ------------------------------------------------------------------ */
-function chunkText(text: string, size = 700, overlap = 100): string[] {
+function chunkText(text: string, size = 1000, overlap = 200): string[] {
     const chunks: string[] = [];
     let start = 0;
 
@@ -56,12 +56,13 @@ function chunkText(text: string, size = 700, overlap = 100): string[] {
 /* ------------------------------------------------------------------ */
 async function embedText(text: string): Promise<number[]> {
     const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${process.env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${process.env.VITE_GEMINI_API_KEY}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 content: { parts: [{ text }] },
+                outputDimensionality: 768
             }),
         }
     );
@@ -100,18 +101,37 @@ async function extractPdfText(filePath: string): Promise<string> {
 /* MAIN INGEST                                                         */
 /* ------------------------------------------------------------------ */
 async function ingestPdf() {
-    console.log("🚀 ingestPDF.ts loaded");
     console.log("🚀 Ingest script started");
 
-    const pdfPath = path.join(process.cwd(), "data", "test.pdf");
-    console.log("Looking for PDF at:", pdfPath);
+    // Get PDF path from command line arguments
+    const pdfArg = process.argv[2];
+    if (!pdfArg) {
+        throw new Error("Usage: npx tsx scripts/ingestPDF.ts <path-to-pdf>");
+    }
+
+    const pdfPath = path.isAbsolute(pdfArg) ? pdfArg : path.join(process.cwd(), pdfArg);
+    const fileName = path.basename(pdfPath);
+
+    console.log("Processing PDF:", pdfPath);
 
     if (!fs.existsSync(pdfPath)) {
-        throw new Error("PDF not found");
+        throw new Error(`PDF not found at: ${pdfPath}`);
     }
 
     console.log("Reading PDF…");
     const text = await extractPdfText(pdfPath);
+
+    // Clear existing chunks for this file
+    const { error: deleteError } = await supabase
+        .from('pdf_chunks')
+        .delete()
+        .eq('metadata->>source', fileName);
+
+    if (deleteError) {
+        console.error("Error clearing old chunks:", deleteError);
+    } else {
+        console.log(`Cleared old chunks for ${fileName}`);
+    }
 
     const chunks = chunkText(text);
     console.log(`Extracted ${chunks.length} chunks`);
@@ -123,17 +143,17 @@ async function ingestPdf() {
             content: chunks[i],
             embedding,
             metadata: {
-                source: "test.pdf",
+                source: fileName,
                 chunk: i + 1,
             },
         });
 
         if (error) throw error;
 
-        console.log(`Inserted chunk ${i + 1}`);
+        console.log(`Inserted chunk ${i + 1}/${chunks.length}`);
     }
 
-    console.log("✅ Ingestion complete");
+    console.log(`✅ Ingestion complete for ${fileName}`);
 }
 
 /* ------------------------------------------------------------------ */
