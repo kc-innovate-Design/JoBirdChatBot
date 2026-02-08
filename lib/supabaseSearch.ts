@@ -48,9 +48,36 @@ export async function searchPdfChunks(
             throw error;
         }
 
-        return data as PdfChunkMatch[];
+        const results = data as PdfChunkMatch[];
+
+        // 3️⃣ Get unique source files from the top results
+        const topSources = [...new Set(results.slice(0, 3).map(r => r.metadata.source))];
+
+        // 4️⃣ Fetch ALL chunks from those source files to get complete product info
+        if (topSources.length > 0) {
+            const { data: siblingChunks, error: siblingError } = await client
+                .from("pdf_chunks")
+                .select("id, content, metadata")
+                .in("metadata->>source", topSources);
+
+            if (!siblingError && siblingChunks) {
+                // Merge sibling chunks with original results, avoiding duplicates
+                const existingIds = new Set(results.map(r => r.id));
+                for (const chunk of siblingChunks) {
+                    if (!existingIds.has(chunk.id)) {
+                        results.push({
+                            ...chunk,
+                            similarity: 0.5 // Mark as sibling chunk with lower similarity
+                        });
+                    }
+                }
+            }
+        }
+
+        return results;
     } catch (err) {
         console.error("Search failed:", err);
         return [];
     }
 }
+
