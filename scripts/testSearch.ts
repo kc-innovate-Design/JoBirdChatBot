@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { searchPdfChunks } from "../lib/searchPdfChunks";
+import { searchPdfChunks } from "../lib/supabaseSearch";
 
 dotenv.config();
 

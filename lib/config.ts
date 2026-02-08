@@ -43,18 +43,21 @@ export async function loadConfig(): Promise<AppConfig> {
     }
 
     if (!config) {
+        const env = (import.meta as any).env || {};
+        const procEnv = (typeof process !== 'undefined' ? process.env : {}) as any;
+
         config = {
-            VITE_FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY,
-            VITE_FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-            VITE_FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-            VITE_FIREBASE_STORAGE_BUCKET: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-            VITE_FIREBASE_MESSAGING_SENDER_ID: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-            VITE_FIREBASE_APP_ID: import.meta.env.VITE_FIREBASE_APP_ID,
-            VITE_FIREBASE_MEASUREMENT_ID: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
-            VITE_GEMINI_API_KEY: import.meta.env.VITE_GEMINI_API_KEY,
-            VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
-            VITE_SUPABASE_SERVICE_ROLE_KEY: import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
-            VITE_APP_PASSWORD: import.meta.env.VITE_APP_PASSWORD || 'jobird2026',
+            VITE_FIREBASE_API_KEY: env.VITE_FIREBASE_API_KEY || procEnv.VITE_FIREBASE_API_KEY || '',
+            VITE_FIREBASE_AUTH_DOMAIN: env.VITE_FIREBASE_AUTH_DOMAIN || procEnv.VITE_FIREBASE_AUTH_DOMAIN || '',
+            VITE_FIREBASE_PROJECT_ID: env.VITE_FIREBASE_PROJECT_ID || procEnv.VITE_FIREBASE_PROJECT_ID || '',
+            VITE_FIREBASE_STORAGE_BUCKET: env.VITE_FIREBASE_STORAGE_BUCKET || procEnv.VITE_FIREBASE_STORAGE_BUCKET || '',
+            VITE_FIREBASE_MESSAGING_SENDER_ID: env.VITE_FIREBASE_MESSAGING_SENDER_ID || procEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+            VITE_FIREBASE_APP_ID: env.VITE_FIREBASE_APP_ID || procEnv.VITE_FIREBASE_APP_ID || '',
+            VITE_FIREBASE_MEASUREMENT_ID: env.VITE_FIREBASE_MEASUREMENT_ID || procEnv.VITE_FIREBASE_MEASUREMENT_ID || '',
+            VITE_GEMINI_API_KEY: env.VITE_GEMINI_API_KEY || procEnv.VITE_GEMINI_API_KEY || '',
+            VITE_SUPABASE_URL: env.VITE_SUPABASE_URL || procEnv.VITE_SUPABASE_URL || '',
+            VITE_SUPABASE_SERVICE_ROLE_KEY: env.VITE_SUPABASE_SERVICE_ROLE_KEY || procEnv.VITE_SUPABASE_SERVICE_ROLE_KEY || '',
+            VITE_APP_PASSWORD: env.VITE_APP_PASSWORD || procEnv.VITE_APP_PASSWORD || 'jobird2026',
         };
     }
 
