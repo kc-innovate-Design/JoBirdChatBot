@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Message, CabinetModel, SOP, SalesFeedback } from '../types';
-import { getSelectionResponse, generateSelectionSpeech, getAI } from '../geminiService';
+import { Message, CabinetModel, SOP, SalesFeedback, DatasheetReference } from '../types';
+import { getSelectionResponse, getSelectionResponseStream, generateSelectionSpeech, getAI } from '../geminiService';
 import { SYSTEM_INSTRUCTION } from '../constants';
 import { Modality, LiveServerMessage, Blob } from '@google/genai';
 
@@ -56,7 +56,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "Let me help you work out which cabinet fits your equipment. To begin, please provide as much information as possible, such as the equipment type, quantity, and dimensions or manufacturer/model info.",
+      content: "Hi, how can I help you?",
       timestamp: new Date()
     }
   ]);
@@ -65,6 +65,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSu
   const [isSpeaking, setIsSpeaking] = useState<number | null>(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(false);
+  const [referencedDatasheets, setReferencedDatasheets] = useState<DatasheetReference[]>([]);
 
   const [feedbackTask, setFeedbackTask] = useState('');
   const [feedbackIssue, setFeedbackIssue] = useState('');
@@ -146,7 +147,7 @@ VOICE MODE SPECIFIC:
 
       const aiInstance = getAI();
       const sessionPromise = (aiInstance as any).live.connect({
-        model: 'gemini-2.0-flash-exp', // Standard model for Live API
+        model: 'gemini-3-flash-preview',
         callbacks: {
           onopen: () => {
             console.log("Live session connected");
@@ -264,25 +265,57 @@ VOICE MODE SPECIFIC:
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
     const userMsg: Message = { role: 'user', content: input, timestamp: new Date() };
+    const userInput = input;
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsLoading(true);
+
+    // Add a placeholder message for streaming
+    const streamingMsgId = Date.now();
+    const placeholderMsg: Message = { role: 'assistant', content: '', timestamp: new Date() };
+    setMessages(prev => [...prev, placeholderMsg]);
+
     try {
       const sendAi = getAI();
       if (!sendAi) throw new Error("Gemini AI client not initialized");
-      const response = await getSelectionResponse(input, messages);
-      const botMsg: Message = { role: 'assistant', content: response, timestamp: new Date() };
-      setMessages(prev => [...prev, botMsg]);
+
+      // Use streaming with callback to update message progressively
+      await getSelectionResponseStream(userInput, messages, (text, datasheets) => {
+        // Update the last message (our placeholder) with new text
+        setMessages(prev => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = { ...updated[lastIdx], content: text || 'Searching knowledge base...' };
+          }
+          return updated;
+        });
+        // Update referenced datasheets for the sidebar
+        if (datasheets.length > 0) {
+          setReferencedDatasheets(datasheets);
+        }
+      });
     } catch (error: any) {
       console.error("Selection Error:", error);
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `Service Error: ${error.message || "I am having difficulty processing that request. Please verify the API key."}`,
-        timestamp: new Date()
-      }]);
+      // Update the placeholder message with the error
+      setMessages(prev => {
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+          updated[lastIdx] = {
+            ...updated[lastIdx],
+            content: `Service Error: ${error.message || "I am having difficulty processing that request. Please verify the API key."}`
+          };
+        }
+        return updated;
+      });
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleDatasheetClick = (datasheet: DatasheetReference) => {
+    setInput(`Tell me more about ${datasheet.displayName}`);
   };
 
   const handleFeedbackSubmit = (e: React.FormEvent) => {
@@ -328,7 +361,8 @@ VOICE MODE SPECIFIC:
     let formatted = content.replace(/[*#]/g, '');
     const headers = [
       "INITIAL ASSESSMENT", "CLARIFYING QUESTIONS", "RECOMMENDED CABINET",
-      "WHY THIS WAS SELECTED", "INTERNAL LAYOUT", "ASSUMPTIONS", "NEXT STEPS"
+      "WHY THIS WAS SELECTED", "INTERNAL LAYOUT", "ASSUMPTIONS", "NEXT STEPS",
+      "TECHNICAL SPECIFICATIONS", "KNOWLEDGE BASE INFORMATION"
     ];
     const regex = new RegExp(`(?=${headers.join(':|')}:)`, 'i');
     const sections = formatted.split(regex);
@@ -341,7 +375,7 @@ VOICE MODE SPECIFIC:
           const body = section.replace(headerMatch ? headerMatch[0] : "", "").trim();
           if (!header && !body) return null;
           const highlightRegex = /\[\[HIGHLIGHT\]\](.*?)\[\[\/HIGHLIGHT\]\]/g;
-          const isMainAction = header.toUpperCase() === 'RECOMMENDED CABINET' || header.toUpperCase() === 'INITIAL ASSESSMENT';
+          const isMainAction = header.toUpperCase() === 'RECOMMENDED CABINET' || header.toUpperCase() === 'INITIAL ASSESSMENT' || header.toUpperCase() === 'KNOWLEDGE BASE INFORMATION';
           return (
             <div key={idx} className={isMainAction ? 'p-3 bg-jobird-red/5 border-l-2 border-jobird-red' : ''}>
               {header && (
@@ -363,152 +397,185 @@ VOICE MODE SPECIFIC:
   };
 
   return (
-    <div className="flex flex-col h-[638px] bg-white border border-slate-200 shadow-2xl relative">
-      {/* Live Mode Pulse Bar */}
-      {isLiveMode && (
-        <div className="absolute top-0 left-0 right-0 h-1 bg-jobird-red z-20 overflow-hidden">
-          <div className="h-full bg-white/40 animate-[shimmer_2s_infinite_linear]" style={{ width: '40%' }}></div>
-        </div>
-      )}
+    <div className="flex gap-4 h-[638px]">
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col bg-white border border-slate-200 shadow-2xl relative">
+        {/* Live Mode Pulse Bar */}
+        {isLiveMode && (
+          <div className="absolute top-0 left-0 right-0 h-1 bg-jobird-red z-20 overflow-hidden">
+            <div className="h-full bg-white/40 animate-[shimmer_2s_infinite_linear]" style={{ width: '40%' }}></div>
+          </div>
+        )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4 bg-white custom-scrollbar">
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[90%] flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse text-right' : 'flex-row'}`}>
-              <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center border-2 text-xs ${msg.role === 'user' ? 'bg-white border-slate-200 text-slate-400' : 'bg-jobird-red border-jobird-red text-white'
-                }`}>
-                <i className={`fas ${msg.role === 'user' ? 'fa-user-tie' : 'fa-robot'}`}></i>
-              </div>
-              <div className="relative group">
-                <div className={`p-4 border ${msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4 bg-white custom-scrollbar">
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[90%] flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse text-right' : 'flex-row'}`}>
+                <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center border-2 text-xs ${msg.role === 'user' ? 'bg-white border-slate-200 text-slate-400' : 'bg-jobird-red border-jobird-red text-white'
                   }`}>
-                  {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[13px] font-bold">{msg.content}</div>}
+                  <i className={`fas ${msg.role === 'user' ? 'fa-user-tie' : 'fa-robot'}`}></i>
                 </div>
-                {msg.role === 'assistant' && !isLiveMode && (msg.content.includes('RECOMMENDED CABINET') || msg.content.includes('INITIAL ASSESSMENT')) && (
-                  <button
-                    onClick={() => handlePlayAudio(msg.content, idx)}
-                    className={`mt-2 w-full bg-slate-100 py-1.5 text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-jobird-red hover:text-white transition-all ${isSpeaking === idx ? 'bg-jobird-red text-white animate-pulse' : ''
-                      }`}
-                  >
-                    <i className={`fas ${isSpeaking === idx ? 'fa-volume-high' : 'fa-volume-low'}`}></i>
-                    Listen to Recommendation
-                  </button>
-                )}
+                <div className="relative group">
+                  <div className={`p-4 border ${msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
+                    }`}>
+                    {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[13px] font-bold">{msg.content}</div>}
+                  </div>
+                  {msg.role === 'assistant' && !isLiveMode && (msg.content.includes('RECOMMENDED CABINET') || msg.content.includes('INITIAL ASSESSMENT')) && (
+                    <button
+                      onClick={() => handlePlayAudio(msg.content, idx)}
+                      className={`mt-2 w-full bg-slate-100 py-1.5 text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-jobird-red hover:text-white transition-all ${isSpeaking === idx ? 'bg-jobird-red text-white animate-pulse' : ''
+                        }`}
+                    >
+                      <i className={`fas ${isSpeaking === idx ? 'fa-volume-high' : 'fa-volume-low'}`}></i>
+                      Listen to Recommendation
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
+          ))}
+
+        </div>
+
+        {/* Input Area */}
+        <div className="p-5 border-t border-slate-100 bg-jobird-lightGrey">
+          <div className="flex gap-3 items-center">
+            <button
+              onClick={startLiveMode}
+              className={`w-[48px] h-[48px] flex-shrink-0 flex items-center justify-center transition-all ${isLiveMode
+                ? 'bg-jobird-red text-white animate-pulse shadow-[0_0_15px_rgba(217,60,35,0.4)]'
+                : 'bg-white border border-slate-200 text-slate-400 hover:text-jobird-red'
+                }`}
+              title={isLiveMode ? "Stop Voice Mode" : "Start Voice Mode"}
+            >
+              <i className={`fas ${isLiveMode ? 'fa-microphone' : 'fa-microphone-slash'} text-lg`}></i>
+            </button>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              disabled={isLiveMode}
+              placeholder={isLiveMode ? "Listening..." : "please describe your requirements"}
+              className="flex-1 px-4 py-3 bg-white border border-slate-200 outline-none text-[13px] font-bold placeholder:text-slate-300 transition-all focus:border-jobird-red disabled:bg-slate-100 shadow-inner"
+            />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || isLoading || isLiveMode}
+              className="bg-jobird-red text-white px-8 h-[48px] flex items-center justify-center font-black uppercase text-[11px] tracking-[0.2em] shadow-lg hover:bg-red-700 disabled:opacity-50 transition-all active:scale-95"
+            >
+              Submit
+            </button>
           </div>
-        ))}
-        {isLoading && !isLiveMode && (
-          <div className="flex justify-start">
-            <div className="flex gap-3">
-              <div className="w-8 h-8 bg-jobird-red flex items-center justify-center text-white text-xs">
-                <i className="fas fa-gear animate-spin"></i>
-              </div>
-              <div className="bg-slate-50 border border-slate-100 p-4 flex items-center gap-4">
-                <span className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">Evaluating selection...</span>
-              </div>
+          <div className="flex justify-center gap-6 mt-4">
+            <button
+              onClick={handleExportChat}
+              className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
+            >
+              <i className="fas fa-file-export"></i>
+              Export chat
+            </button>
+          </div>
+        </div>
+
+        {showFeedbackModal && (
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-md shadow-2xl animate-in fade-in zoom-in-95 duration-300 border-t-4 border-jobird-red">
+              <form onSubmit={handleFeedbackSubmit}>
+                <div className="p-4 bg-jobird-lightGrey border-b border-slate-200 flex justify-between items-center">
+                  <h3 className="font-black text-slate-900 uppercase tracking-widest text-[10px]">Feedback form</h3>
+                  <button type="button" onClick={() => setShowFeedbackModal(false)} className="text-slate-400 hover:text-jobird-red"><i className="fas fa-times"></i></button>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Document / SOP Reference</label>
+                    <input required value={feedbackTask} onChange={e => setFeedbackTask(e.target.value)} placeholder="e.g. JB08 clearance" className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 font-bold text-xs outline-none focus:border-jobird-red" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Details of Issue</label>
+                    <textarea required value={feedbackIssue} onChange={e => setFeedbackIssue(e.target.value)} rows={3} placeholder="Describe issue..." className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 text-xs font-medium outline-none focus:border-jobird-red" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Priority</label>
+                    <div className="flex gap-2">
+                      {(['Low', 'Medium', 'High'] as const).map(u => (
+                        <button
+                          key={u}
+                          type="button"
+                          onClick={() => setFeedbackUrgency(u)}
+                          className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest transition-all ${feedbackUrgency === u ? 'bg-jobird-red text-white' : 'bg-jobird-lightGrey text-slate-400 border border-slate-200'
+                            }`}
+                        >
+                          {u}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="p-4 bg-jobird-lightGrey border-t border-slate-200 flex justify-end gap-4">
+                  <button type="button" onClick={() => setShowFeedbackModal(false)} className="px-3 py-2 font-black text-slate-400 uppercase text-[9px] tracking-widest">Cancel</button>
+                  <button type="submit" className="px-6 py-2.5 bg-jobird-red text-white font-black uppercase text-[9px] tracking-widest shadow-xl">Submit</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
       </div>
 
-      {/* Input Area */}
-      <div className="p-5 border-t border-slate-100 bg-jobird-lightGrey">
-        <div className="flex gap-3 items-center">
-          <button
-            onClick={startLiveMode}
-            className={`w-[48px] h-[48px] flex-shrink-0 flex items-center justify-center transition-all ${isLiveMode
-              ? 'bg-jobird-red text-white animate-pulse shadow-[0_0_15px_rgba(217,60,35,0.4)]'
-              : 'bg-white border border-slate-200 text-slate-400 hover:text-jobird-red'
-              }`}
-            title={isLiveMode ? "Stop Voice Mode" : "Start Voice Mode"}
-          >
-            <i className={`fas ${isLiveMode ? 'fa-microphone' : 'fa-microphone-slash'} text-lg`}></i>
-          </button>
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            disabled={isLiveMode}
-            placeholder={isLiveMode ? "Listening..." : "please describe your requirements"}
-            className="flex-1 px-4 py-3 bg-white border border-slate-200 outline-none text-[13px] font-bold placeholder:text-slate-300 transition-all focus:border-jobird-red disabled:bg-slate-100 shadow-inner"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading || isLiveMode}
-            className="bg-jobird-red text-white px-8 h-[48px] flex items-center justify-center font-black uppercase text-[11px] tracking-[0.2em] shadow-lg hover:bg-red-700 disabled:opacity-50 transition-all active:scale-95"
-          >
-            Submit
-          </button>
+      {/* Datasheet Sidebar */}
+      <div className="w-64 bg-white border border-slate-200 shadow-lg flex flex-col">
+        <div className="p-4 bg-jobird-lightGrey border-b border-slate-200">
+          <h3 className="font-black text-slate-700 uppercase tracking-widest text-[10px] flex items-center gap-2">
+            <i className="fas fa-file-pdf text-jobird-red"></i>
+            Referenced Datasheets
+          </h3>
         </div>
-        <div className="flex justify-center gap-6 mt-4">
-          <button
-            onClick={onOpenAdmin}
-            className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
-          >
-            <i className="fas fa-lock"></i>
-            Admin panel
-          </button>
-          <button
-            onClick={() => setShowFeedbackModal(true)}
-            className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
-          >
-            <i className="fas fa-flag"></i>
-            Feedback
-          </button>
-          <button
-            onClick={handleExportChat}
-            className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
-          >
-            <i className="fas fa-file-export"></i>
-            Export chat
-          </button>
-        </div>
-      </div>
-
-      {showFeedbackModal && (
-        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md shadow-2xl animate-in fade-in zoom-in-95 duration-300 border-t-4 border-jobird-red">
-            <form onSubmit={handleFeedbackSubmit}>
-              <div className="p-4 bg-jobird-lightGrey border-b border-slate-200 flex justify-between items-center">
-                <h3 className="font-black text-slate-900 uppercase tracking-widest text-[10px]">Feedback form</h3>
-                <button type="button" onClick={() => setShowFeedbackModal(false)} className="text-slate-400 hover:text-jobird-red"><i className="fas fa-times"></i></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Document / SOP Reference</label>
-                  <input required value={feedbackTask} onChange={e => setFeedbackTask(e.target.value)} placeholder="e.g. JB08 clearance" className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 font-bold text-xs outline-none focus:border-jobird-red" />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Details of Issue</label>
-                  <textarea required value={feedbackIssue} onChange={e => setFeedbackIssue(e.target.value)} rows={3} placeholder="Describe issue..." className="w-full p-2.5 bg-jobird-lightGrey border border-slate-200 text-xs font-medium outline-none focus:border-jobird-red" />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Priority</label>
-                  <div className="flex gap-2">
-                    {(['Low', 'Medium', 'High'] as const).map(u => (
-                      <button
-                        key={u}
-                        type="button"
-                        onClick={() => setFeedbackUrgency(u)}
-                        className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest transition-all ${feedbackUrgency === u ? 'bg-jobird-red text-white' : 'bg-jobird-lightGrey text-slate-400 border border-slate-200'
-                          }`}
-                      >
-                        {u}
-                      </button>
-                    ))}
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {referencedDatasheets.length === 0 ? (
+            <div className="text-[11px] text-slate-400 italic p-2">
+              Datasheets mentioned in responses will appear here for quick reference.
+            </div>
+          ) : (
+            referencedDatasheets.map((ds, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleDatasheetClick(ds)}
+                className="w-full text-left p-3 bg-slate-50 hover:bg-jobird-red/10 border border-slate-100 hover:border-jobird-red/30 transition-all group"
+              >
+                <div className="flex items-start gap-2">
+                  <i className="fas fa-file-alt text-slate-300 group-hover:text-jobird-red text-xs mt-0.5"></i>
+                  <div>
+                    {ds.productName ? (
+                      <>
+                        <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
+                          {ds.productName}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {ds.displayName}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
+                        {ds.displayName}
+                      </div>
+                    )}
+                    <div className="text-[9px] text-slate-400 mt-1">
+                      Click to ask more
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="p-4 bg-jobird-lightGrey border-t border-slate-200 flex justify-end gap-4">
-                <button type="button" onClick={() => setShowFeedbackModal(false)} className="px-3 py-2 font-black text-slate-400 uppercase text-[9px] tracking-widest">Cancel</button>
-                <button type="submit" className="px-6 py-2.5 bg-jobird-red text-white font-black uppercase text-[9px] tracking-widest shadow-xl">Submit</button>
-              </div>
-            </form>
-          </div>
+              </button>
+            ))
+          )}
         </div>
-      )}
+        {referencedDatasheets.length > 0 && (
+          <div className="p-3 border-t border-slate-100">
+            <div className="text-[9px] text-slate-400 text-center">
+              {referencedDatasheets.length} datasheet{referencedDatasheets.length !== 1 ? 's' : ''} found
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

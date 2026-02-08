@@ -91,7 +91,7 @@ const App: React.FC = () => {
       <div className="absolute top-4 right-4 z-50">
         <button
           onClick={handleLogout}
-          className="text-jobird-navy/20 hover:text-jobird-red font-black uppercase text-[9px] tracking-widest transition-colors"
+          className="text-jobird-navy/60 hover:text-jobird-red font-black uppercase text-[9px] tracking-widest transition-colors"
         >
           Logout
         </button>
@@ -99,7 +99,7 @@ const App: React.FC = () => {
 
       {currentView === 'assistant' ? (
         <main className="flex-1 w-full p-4 lg:p-8">
-          <div className="max-w-4xl mx-auto">
+          <div className="max-w-6xl mx-auto">
             <ChatInterface
               catalog={catalog}
               activeSops={activeSops.filter(s => s.status === 'Active')}

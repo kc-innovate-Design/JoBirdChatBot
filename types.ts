@@ -66,3 +66,19 @@ export interface AuditEntry {
   timestamp: string;
   changeDetail: string;
 }
+
+export interface DatasheetReference {
+  filename: string;
+  displayName: string;
+  productName?: string; // e.g. "2 x 30M Fire Hose cabinet"
+}
+
+export interface AIResponse {
+  text: string;
+  referencedDatasheets: DatasheetReference[];
+}
+
+export interface KnowledgeBaseStats {
+  totalDatasheets: number;
+  categoryMatches?: { category: string; count: number }[];
+}

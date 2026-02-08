@@ -81,3 +81,78 @@ export async function searchPdfChunks(
     }
 }
 
+export interface KnowledgeBaseStats {
+    totalDatasheets: number;
+    categoryMatches?: { keyword: string; count: number; datasheets: string[] }[];
+}
+
+export async function getKnowledgeBaseStats(categoryKeyword?: string): Promise<KnowledgeBaseStats> {
+    const config = getConfig();
+    if (!config.VITE_SUPABASE_URL || !config.VITE_SUPABASE_SERVICE_ROLE_KEY) {
+        console.error("Supabase configuration missing");
+        return { totalDatasheets: 0 };
+    }
+
+    try {
+        const client = getSupabase();
+
+        // Get all chunks to count unique sources
+        const { data: sources, error } = await client
+            .from("pdf_chunks")
+            .select("metadata");
+
+        if (error || !sources) {
+            console.error("Failed to get stats:", error);
+            return { totalDatasheets: 0 };
+        }
+
+        // Count unique PDF sources
+        const uniqueSources = new Set(sources.map((s: any) => s.metadata?.source).filter(Boolean));
+        const totalDatasheets = uniqueSources.size;
+
+        // If a category keyword is provided, find matches and list them
+        if (categoryKeyword) {
+            const keyword = categoryKeyword.toLowerCase();
+            const matchingSources = new Set<string>();
+
+            for (const s of sources) {
+                const source = s.metadata?.source?.toLowerCase() || '';
+                if (source.includes(keyword)) {
+                    matchingSources.add(s.metadata?.source);
+                }
+            }
+
+            // Also search content for the keyword
+            const { data: contentMatches } = await client
+                .from("pdf_chunks")
+                .select("metadata")
+                .ilike("content", `%${categoryKeyword}%`);
+
+            if (contentMatches) {
+                for (const c of contentMatches) {
+                    if (c.metadata?.source) {
+                        matchingSources.add(c.metadata.source);
+                    }
+                }
+            }
+
+            // Convert to sorted array and create display names
+            const datasheetList = Array.from(matchingSources).sort();
+
+            return {
+                totalDatasheets,
+                categoryMatches: [{
+                    keyword: categoryKeyword,
+                    count: matchingSources.size,
+                    datasheets: datasheetList
+                }]
+            };
+        }
+
+        return { totalDatasheets };
+    } catch (err) {
+        console.error("Stats query failed:", err);
+        return { totalDatasheets: 0 };
+    }
+}
+
