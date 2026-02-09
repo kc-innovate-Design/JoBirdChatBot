@@ -24,21 +24,21 @@ let config: AppConfig | null = null;
 export async function loadConfig(): Promise<AppConfig> {
     if (config) return config;
 
-    // In production, we fetch from a JSON file that contains ONLY Firebase config
-    // Sensitive keys are NOT included - they stay server-side
+    // Fetch safe client-side config from the backend API
+    // This allows us to inject environment variables at runtime without brittle config files
     try {
-        const response = await fetch('/config.json');
+        const response = await fetch('/api/config');
         if (response.ok) {
             const runtimeConfig = await response.json();
             config = {
-                VITE_FIREBASE_API_KEY: runtimeConfig.VITE_FIREBASE_API_KEY || import.meta.env.VITE_FIREBASE_API_KEY,
-                VITE_FIREBASE_AUTH_DOMAIN: runtimeConfig.VITE_FIREBASE_AUTH_DOMAIN || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-                VITE_FIREBASE_PROJECT_ID: runtimeConfig.VITE_FIREBASE_PROJECT_ID || import.meta.env.VITE_FIREBASE_PROJECT_ID,
-                VITE_FIREBASE_STORAGE_BUCKET: runtimeConfig.VITE_FIREBASE_STORAGE_BUCKET || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-                VITE_FIREBASE_MESSAGING_SENDER_ID: runtimeConfig.VITE_FIREBASE_MESSAGING_SENDER_ID || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-                VITE_FIREBASE_APP_ID: runtimeConfig.VITE_FIREBASE_APP_ID || import.meta.env.VITE_FIREBASE_APP_ID,
-                VITE_FIREBASE_MEASUREMENT_ID: runtimeConfig.VITE_FIREBASE_MEASUREMENT_ID || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
-                // These stay empty in production - calls go through backend API
+                VITE_FIREBASE_API_KEY: runtimeConfig.VITE_FIREBASE_API_KEY || import.meta.env.VITE_FIREBASE_API_KEY || '',
+                VITE_FIREBASE_AUTH_DOMAIN: runtimeConfig.VITE_FIREBASE_AUTH_DOMAIN || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
+                VITE_FIREBASE_PROJECT_ID: runtimeConfig.VITE_FIREBASE_PROJECT_ID || import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+                VITE_FIREBASE_STORAGE_BUCKET: runtimeConfig.VITE_FIREBASE_STORAGE_BUCKET || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
+                VITE_FIREBASE_MESSAGING_SENDER_ID: runtimeConfig.VITE_FIREBASE_MESSAGING_SENDER_ID || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+                VITE_FIREBASE_APP_ID: runtimeConfig.VITE_FIREBASE_APP_ID || import.meta.env.VITE_FIREBASE_APP_ID || '',
+                VITE_FIREBASE_MEASUREMENT_ID: runtimeConfig.VITE_FIREBASE_MEASUREMENT_ID || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
+                // These stay empty in production for main chat (handled by server)
                 VITE_GEMINI_API_KEY: runtimeConfig.VITE_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '',
                 // Live Mode key - can be exposed client-side (should be a restricted key)
                 VITE_GEMINI_LIVE_API_KEY: runtimeConfig.VITE_GEMINI_LIVE_API_KEY || import.meta.env.VITE_GEMINI_LIVE_API_KEY || '',
@@ -46,10 +46,10 @@ export async function loadConfig(): Promise<AppConfig> {
                 VITE_SUPABASE_SERVICE_ROLE_KEY: '', // NEVER sent to client
                 VITE_APP_PASSWORD: '', // Password verification now done server-side
             };
-            console.log("Runtime configuration loaded (secure mode)");
+            console.log("Runtime configuration loaded via API");
         }
     } catch (e) {
-        console.warn("Could not load runtime config, falling back to build-time env vars", e);
+        console.warn("Could not load runtime config via API, falling back to build-time env vars", e);
     }
 
     if (!config) {
