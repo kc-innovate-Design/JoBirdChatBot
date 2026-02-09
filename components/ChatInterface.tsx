@@ -155,8 +155,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             setReferencedDatasheets(prevDs => {
               const merged = [...prevDs];
               pendingDatasheets.forEach(ds => {
-                const isDuplicate = merged.find(m =>
-                  m.filename.toLowerCase().trim() === ds.filename.toLowerCase().trim()
+                // Normalize for comparison: lowercase, trim, remove .pdf extension
+                const normalizedNew = ds.filename.toLowerCase().trim().replace(/\.pdf$/i, '');
+                const isDuplicate = merged.some(m =>
+                  m.filename.toLowerCase().trim().replace(/\.pdf$/i, '') === normalizedNew
                 );
                 if (!isDuplicate) {
                   merged.push(ds);
@@ -327,7 +329,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 {followUpQuestions.map((q, i) => (
                   <button
                     key={i}
-                    onClick={() => { setInput(q); }}
+                    onClick={() => {
+                      // Auto-submit the follow-up question immediately
+                      const newMsg: Message = { role: 'user', content: q, timestamp: new Date() };
+                      const newHistory = [...messages, newMsg];
+                      setMessages(newHistory);
+                      setFollowUpQuestions([]);
+                      processQuery(q, newHistory);
+                    }}
                     className="px-4 py-1.5 bg-white border border-slate-200 text-[11px] font-bold text-jobird-red hover:bg-jobird-red hover:text-white transition-all shadow-sm rounded-full"
                   >
                     {q}
