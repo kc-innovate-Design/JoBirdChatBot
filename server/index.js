@@ -371,7 +371,8 @@ function extractDatasheetReferences(searchResults) {
             uniqueSources.set(filename, {
                 filename,
                 displayName,
-                productName: finalProductName
+                productName: finalProductName,
+                url: `${SUPABASE_URL}/storage/v1/object/public/datasheets/${filename}`
             });
         }
     }

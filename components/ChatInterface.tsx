@@ -205,9 +205,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const handleDatasheetClick = (datasheet: DatasheetReference) => {
     setInput(`Tell me more about ${datasheet.displayName}`);
-    // Points to point 8: Open in new tab
-    if (datasheet.url || datasheet.source) {
-      const url = datasheet.url || `/datasheets/${datasheet.source}`;
+
+    // Open the PDF in a new tab
+    const url = datasheet.url || (datasheet.filename ? `/datasheets/${datasheet.filename}` : undefined);
+    if (url) {
       window.open(url, '_blank');
     }
   };
