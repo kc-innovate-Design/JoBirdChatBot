@@ -9,9 +9,9 @@ const Header: React.FC = () => {
         <div className="flex items-center h-full">
           {/* Bird Logo Icon */}
           <img
-            src="/logo_official.png"
+            src="/logo.png"
             alt="JoBird Logo"
-            className="h-12 w-auto object-contain"
+            className="h-10 w-auto object-contain"
           />
         </div>
       </header>
