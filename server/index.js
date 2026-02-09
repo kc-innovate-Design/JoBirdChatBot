@@ -91,7 +91,7 @@ async function embedQuery(text) {
 }
 
 // Search Supabase for PDF chunks
-async function searchPdfChunks(question, matchCount = 5) {
+async function searchPdfChunks(question, matchCount = 8) {
     const supabase = getSupabase();
     if (!supabase) return [];
 
@@ -138,6 +138,12 @@ async function searchPdfChunks(question, matchCount = 5) {
 
 // Expand short queries into descriptive search terms
 async function expandQuery(query, history) {
+    // Skip expansion for alphanumeric part numbers, filenames with underscores, 
+    // or queries that already look like technical terms
+    if (query.match(/^[A-Z]{1,3}\d+/i) || query.includes('_') || query.includes('-')) {
+        return query;
+    }
+
     if (query.length > 30 || query.includes(' ')) {
         // If it's already a sentence or specific question, no need to expand much
         // but still worth checking if it's just a "how many" type
@@ -220,7 +226,14 @@ function extractDatasheetReferences(searchResults) {
                 if (productName.length < 5) productName = undefined;
             }
 
-            uniqueSources.set(filename, { filename, displayName, productName });
+            // Fallback: If no product name found, use the display name but clean it up
+            const finalProductName = productName || displayName;
+
+            uniqueSources.set(filename, {
+                filename,
+                displayName,
+                productName: finalProductName
+            });
         }
     }
 
