@@ -423,7 +423,7 @@ app.post('/api/chat', async (req, res) => {
 
         // Generate response
         const response = await ai.models.generateContent({
-            model: 'models/gemini-3-flash-preview',
+            model: 'models/gemini-2.0-flash',
             contents: [{
                 role: 'user',
                 parts: [
@@ -494,7 +494,7 @@ app.post('/api/chat/stream', async (req, res) => {
         }
 
         const response = await ai.models.generateContentStream({
-            model: 'models/gemini-3-flash-preview',
+            model: 'models/gemini-2.0-flash',
             contents: [{
                 role: 'user',
                 parts: [
