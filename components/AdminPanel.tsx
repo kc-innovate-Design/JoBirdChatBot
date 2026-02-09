@@ -14,9 +14,9 @@ interface AdminPanelProps {
   onDeprecate: (id: string, reason: string) => void;
 }
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ 
-  onBack, activeSops, draftSops, auditLog, salesFeedback, changeRequests, 
-  onPropose, onApprove, onDeprecate 
+const AdminPanel: React.FC<AdminPanelProps> = ({
+  onBack, activeSops, draftSops, auditLog, salesFeedback, changeRequests,
+  onPropose, onApprove, onDeprecate
 }) => {
   const [showForm, setShowForm] = useState(false);
   const [editingSop, setEditingSop] = useState<Partial<SOP> | null>(null);
@@ -62,14 +62,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
   return (
     <div className="flex flex-col gap-10 max-w-7xl mx-auto w-full p-4 md:p-12 animate-in fade-in slide-in-from-bottom-8 duration-500">
-      <div className="flex items-center justify-between bg-white p-8 border-b-4 border-jobird-yellow shadow-md rounded-sm">
+      <div className="flex items-center justify-between bg-white p-8 border-b-4 border-jobird-red shadow-md rounded-sm">
         <div>
-          <h2 className="text-4xl font-black text-jobird-navy uppercase tracking-tighter">Document management</h2>
+          <h2 className="text-4xl font-black text-jobird-red uppercase tracking-tighter">Document Management</h2>
           <p className="text-[12px] text-slate-500 font-bold uppercase tracking-[0.3em] mt-2">Document Control & Standard Operating Procedures</p>
         </div>
-        <button 
+        <button
           onClick={onBack}
-          className="px-8 py-4 bg-jobird-navy text-white font-black uppercase text-xs tracking-widest hover:bg-slate-800 transition-all flex items-center gap-3 shadow-xl"
+          className="px-8 py-4 bg-jobird-red text-white font-black uppercase text-xs tracking-widest hover:bg-red-700 transition-all flex items-center gap-3 shadow-xl"
         >
           <i className="fas fa-chevron-left"></i> Selection Assistant
         </button>
@@ -80,8 +80,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         <section className="bg-white xl:col-span-7 shadow-sm border border-slate-200 overflow-hidden rounded-sm">
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <i className="fas fa-file-shield text-jobird-navy text-xl"></i>
-              <h3 className="font-black text-jobird-navy text-[13px] uppercase tracking-widest">Standard Operating Procedures</h3>
+              <i className="fas fa-file-shield text-jobird-red text-xl"></i>
+              <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-widest">Standard Operating Procedures</h3>
             </div>
           </div>
           <div className="p-0 overflow-x-auto custom-scrollbar">
@@ -97,13 +97,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               <tbody className="divide-y divide-slate-50">
                 {activeSops.filter(s => s.status === 'Active').map(sop => (
                   <tr key={sop.id} className="hover:bg-slate-50/50 transition-colors group">
-                    <td className="px-8 py-6 font-black text-jobird-navy">{sop.id}</td>
+                    <td className="px-8 py-6 font-black text-slate-700">{sop.id}</td>
                     <td className="px-8 py-6 font-mono text-slate-500 font-bold">{sop.version}</td>
                     <td className="px-8 py-6">
                       <span className="bg-green-100 text-green-800 px-3 py-1 rounded-sm font-black text-[10px] uppercase tracking-widest">Active</span>
                     </td>
                     <td className="px-8 py-6 text-right flex justify-end gap-6">
-                      <button onClick={() => handleStartPropose(sop)} className="text-jobird-navy font-black hover:text-jobird-red uppercase text-[10px] tracking-widest transition-colors">Update</button>
+                      <button onClick={() => handleStartPropose(sop)} className="text-jobird-red font-black hover:text-red-700 uppercase text-[10px] tracking-widest transition-colors">Update</button>
                       <button onClick={() => onDeprecate(sop.id, 'Administrative Decision')} className="text-slate-400 font-black hover:text-jobird-red transition-colors uppercase text-[10px] tracking-widest">Retire</button>
                     </td>
                   </tr>
@@ -115,8 +115,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
         {/* Sales Feedback */}
         <section className="bg-white xl:col-span-5 shadow-sm border border-slate-200 overflow-hidden flex flex-col rounded-sm">
-          <div className="p-6 bg-jobird-navy border-b border-jobird-navy flex items-center gap-3">
-            <i className="fas fa-tower-observation text-jobird-yellow text-xl"></i>
+          <div className="p-6 bg-jobird-red border-b border-jobird-red flex items-center gap-3">
+            <i className="fas fa-tower-observation text-white text-xl"></i>
             <h3 className="font-black text-white text-[13px] uppercase tracking-widest">Feedback & Change Requests</h3>
           </div>
           <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto custom-scrollbar bg-white">
@@ -130,13 +130,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               <div key={fb.id} className="p-8 hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0">
                 <div className="mb-6">
                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Feedback Request</h4>
-                  
+
                   <div className="space-y-5">
                     <div>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Reported Issue:</p>
                       <p className="text-sm font-bold text-slate-800">{fb.issue}</p>
                     </div>
-                    
+
                     <div>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Affected Item:</p>
                       <p className="text-sm font-bold text-slate-800">{fb.task}</p>
@@ -164,7 +164,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
         {/* Audit Log */}
         <section className="bg-white shadow-sm border border-slate-200 overflow-hidden xl:col-span-12 rounded-sm">
-          <div className="p-6 bg-slate-900 border-b border-slate-800 flex items-center gap-3">
+          <div className="p-6 bg-slate-700 border-b border-slate-600 flex items-center gap-3">
             <i className="fas fa-fingerprint text-white/50 text-xl"></i>
             <h3 className="font-black text-white text-[13px] uppercase tracking-widest">Document Change Log</h3>
           </div>
@@ -173,7 +173,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               <div key={log.id} className={`p-6 flex items-center justify-between gap-10 ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} border-b border-slate-100`}>
                 <div className="flex items-center gap-12 flex-1 min-w-0">
                   <div className="w-32 flex-shrink-0">
-                    <p className="font-black text-jobird-navy text-[11px] uppercase tracking-widest truncate">{log.user}</p>
+                    <p className="font-black text-slate-700 text-[11px] uppercase tracking-widest truncate">{log.user}</p>
                     <p className="text-[10px] text-slate-400 font-bold tracking-tighter uppercase mt-1">{log.timestamp}</p>
                   </div>
                   <div className="flex-1 min-w-0">
