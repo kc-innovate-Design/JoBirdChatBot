@@ -86,10 +86,27 @@ const App: React.FC = () => {
       if (s.id === activeSessionId) {
         // Dynamic title based on first user message if title is still default
         let title = s.title;
-        if (title.startsWith('New Chat') && newMessages.length > 1) {
+        if ((title.startsWith('New Chat') || title === 'New Selection') && newMessages.length > 1) {
           const firstUserMsg = newMessages.find(m => m.role === 'user');
           if (firstUserMsg) {
-            title = firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
+            // Extract key product topics for a meaningful summary
+            const content = firstUserMsg.content.toLowerCase();
+            const topics: string[] = [];
+
+            // Check for common product categories
+            if (content.includes('life jacket') || content.includes('immersion')) topics.push('Life Jackets');
+            if (content.includes('fire hose') || content.includes('hose cabinet')) topics.push('Fire Hose');
+            if (content.includes('scba') || content.includes('breathing apparatus') || content.includes('ba cabinet')) topics.push('SCBA');
+            if (content.includes('stretcher') || content.includes('duofold')) topics.push('Stretcher');
+            if (content.includes('arctic') || content.includes('heater') || content.includes('insulation')) topics.push('Arctic');
+            if (content.includes('marine') || content.includes('offshore') || content.includes('vessel')) topics.push('Marine');
+
+            if (topics.length > 0) {
+              title = topics.slice(0, 2).join(' & ') + ' Enquiry';
+            } else {
+              // Fallback: Use first meaningful words
+              title = firstUserMsg.content.slice(0, 35) + (firstUserMsg.content.length > 35 ? '...' : '');
+            }
           }
         }
         // Merge datasheets instead of replacing, deduplicating by filename
