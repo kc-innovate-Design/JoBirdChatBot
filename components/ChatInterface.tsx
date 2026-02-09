@@ -205,15 +205,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const handleDatasheetClick = (datasheet: DatasheetReference) => {
     setInput(`Tell me more about ${datasheet.displayName}`);
+  };
 
-    // Open the PDF in a new background tab (keep current window active)
+  const handleViewPdf = (datasheet: DatasheetReference, e: React.MouseEvent) => {
+    e.stopPropagation();
     const url = datasheet.url || (datasheet.filename ? `/datasheets/${datasheet.filename}` : undefined);
     if (url) {
-      const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
-      // Attempt to keep focus on the current window
-      if (newWindow) {
-        window.focus();
-      }
+      window.open(url, '_blank');
     }
   };
 
@@ -371,6 +369,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <i className="fas fa-file-export"></i>
               Export chat
             </button>
+            <button
+              onClick={() => setShowFeedbackModal(true)}
+              className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
+            >
+              <i className="fas fa-comment-dots"></i>
+              Feedback
+            </button>
+            <button
+              onClick={onOpenAdmin}
+              className="text-[9px] font-black text-slate-400 hover:text-jobird-red uppercase tracking-widest flex items-center gap-2 transition-all"
+            >
+              <i className="fas fa-cog"></i>
+              Admin
+            </button>
           </div>
         </div>
 
@@ -433,34 +445,52 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </div>
           ) : (
             referencedDatasheets.map((ds, idx) => (
-              <button
+              <div
                 key={idx}
-                onClick={() => handleDatasheetClick(ds)}
-                className="w-full text-left p-3 bg-slate-50 hover:bg-jobird-red/10 border border-slate-100 hover:border-jobird-red/30 transition-all group"
+                className="p-3 bg-slate-50 border border-slate-100 transition-all"
               >
-                <div className="flex items-start gap-2">
-                  <i className="fas fa-file-alt text-slate-300 group-hover:text-jobird-red text-xs mt-0.5"></i>
-                  <div>
-                    {ds.productName ? (
-                      <>
+                <button
+                  onClick={() => handleDatasheetClick(ds)}
+                  className="w-full text-left hover:text-jobird-red transition-all group"
+                >
+                  <div className="flex items-start gap-2">
+                    <i className="fas fa-file-alt text-slate-300 group-hover:text-jobird-red text-xs mt-0.5"></i>
+                    <div>
+                      {ds.productName ? (
+                        <>
+                          <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
+                            {ds.productName}
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {ds.displayName}
+                          </div>
+                        </>
+                      ) : (
                         <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
-                          {ds.productName}
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
                           {ds.displayName}
                         </div>
-                      </>
-                    ) : (
-                      <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
-                        {ds.displayName}
-                      </div>
-                    )}
-                    <div className="text-[9px] text-slate-400 mt-1">
-                      Click to ask more
+                      )}
                     </div>
                   </div>
+                </button>
+                <div className="flex gap-2 mt-2 pl-5">
+                  <button
+                    onClick={() => handleDatasheetClick(ds)}
+                    className="text-[9px] font-bold text-slate-400 hover:text-jobird-red uppercase tracking-wide"
+                  >
+                    Ask more
+                  </button>
+                  {ds.url && (
+                    <button
+                      onClick={(e) => handleViewPdf(ds, e)}
+                      className="text-[9px] font-bold text-jobird-red hover:text-red-700 uppercase tracking-wide flex items-center gap-1"
+                    >
+                      <i className="fas fa-external-link-alt text-[8px]"></i>
+                      View PDF
+                    </button>
+                  )}
                 </div>
-              </button>
+              </div>
             ))
           )}
         </div>
