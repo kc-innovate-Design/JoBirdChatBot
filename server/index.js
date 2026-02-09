@@ -594,7 +594,7 @@ app.post('/api/speech', async (req, res) => {
         }
 
         const response = await ai.models.generateContent({
-            model: 'models/gemini-3-flash-preview',
+            model: 'models/gemini-2.0-flash',
             contents: [{ parts: [{ text: `Recommendation: ${text}` }] }],
             config: {
                 responseModalities: [Modality.AUDIO],
