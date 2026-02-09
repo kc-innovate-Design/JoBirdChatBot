@@ -1,4 +1,4 @@
-# Stage 1: Build
+# Stage 1: Build the frontend
 FROM node:20-alpine AS build
 
 WORKDIR /app
@@ -9,32 +9,38 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
-# Copy all files
+# Copy all source files
 COPY . .
 
-# Build the application
+# Build the Vite application
 RUN npm run build
 
-# Stage 2: Serve
-FROM nginx:stable-alpine
+# Stage 2: Production server
+FROM node:20-alpine
 
-# Install envsubst (included in alpine)
-RUN apk add --no-cache gettext
+WORKDIR /app
 
-# Copy build output to nginx
-COPY --from=build /app/dist /usr/share/nginx/html
+# Copy package files for production dependencies
+COPY package*.json ./
 
-# Copy custom nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Install only production dependencies
+RUN npm install --omit=dev
 
-# Copy config template
-COPY public/config.json.template /usr/share/nginx/html/config.json.template
+# Copy the built frontend
+COPY --from=build /app/dist ./dist
 
-# Copy startup script that generates config.json from env vars
-COPY generate-config.sh /docker-entrypoint.d/40-generate-config.sh
-RUN chmod +x /docker-entrypoint.d/40-generate-config.sh
+# Copy the server
+COPY server ./server
+
+# Copy config template for Firebase (safe to expose)
+COPY public/config.json.template ./dist/config.json.template
+
+# Copy script to generate Firebase config at runtime
+COPY generate-config.sh ./generate-config.sh
+RUN chmod +x ./generate-config.sh
 
 # Expose port (Cloud Run uses PORT env var, default 8080)
 EXPOSE 8080
 
-CMD ["nginx", "-g", "daemon off;"]
+# Generate Firebase config and start the Express server
+CMD sh -c "./generate-config.sh && node server/index.js"

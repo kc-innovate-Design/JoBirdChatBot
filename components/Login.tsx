@@ -1,20 +1,32 @@
 import React, { useState } from 'react';
 
 interface LoginProps {
-    onLogin: (password: string) => boolean;
+    onLogin: (password: string) => Promise<boolean>;
 }
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
     const [password, setPassword] = useState('');
     const [error, setError] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (onLogin(password)) {
-            setError(false);
-        } else {
+        setIsLoading(true);
+        setError(false);
+
+        try {
+            const success = await onLogin(password);
+            if (success) {
+                setError(false);
+            } else {
+                setError(true);
+                setPassword('');
+            }
+        } catch (err) {
             setError(true);
             setPassword('');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -45,7 +57,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className={`w-full px-5 py-4 bg-slate-50 border-2 ${error ? 'border-jobird-red' : 'border-slate-100'} focus:border-jobird-navy outline-none transition-all font-mono text-sm shadow-inner rounded-sm`}
+                                disabled={isLoading}
+                                className={`w-full px-5 py-4 bg-slate-50 border-2 ${error ? 'border-jobird-red' : 'border-slate-100'} focus:border-jobird-navy outline-none transition-all font-mono text-sm shadow-inner rounded-sm disabled:opacity-50`}
                                 placeholder="••••••••"
                                 autoFocus
                             />
@@ -58,9 +71,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
                         <button
                             type="submit"
-                            className="w-full py-5 bg-jobird-navy text-white font-black uppercase text-xs tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl hover:shadow-jobird-navy/20 active:scale-[0.98]"
+                            disabled={isLoading}
+                            className="w-full py-5 bg-jobird-navy text-white font-black uppercase text-xs tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl hover:shadow-jobird-navy/20 active:scale-[0.98] disabled:opacity-50"
                         >
-                            Enter Workspace
+                            {isLoading ? 'Verifying...' : 'Enter Workspace'}
                         </button>
                     </form>
                 </div>

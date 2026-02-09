@@ -6,7 +6,6 @@ import Header from './components/Header';
 import ChatInterface from './components/ChatInterface';
 import AdminPanel from './components/AdminPanel';
 import Login from './components/Login';
-import { getConfig } from './lib/config';
 
 type View = 'assistant' | 'admin';
 
@@ -23,14 +22,29 @@ const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<CabinetModel | null>(null);
   const [currentView, setCurrentView] = useState<View>('assistant');
 
-  const handleLogin = (password: string) => {
-    const config = getConfig();
-    if (password === config.VITE_APP_PASSWORD) {
-      setIsAuthenticated(true);
-      localStorage.setItem('jb_authenticated', 'true');
-      return true;
+  const handleLogin = async (password: string): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/verify-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      const data = await response.json();
+      if (data.valid) {
+        setIsAuthenticated(true);
+        localStorage.setItem('jb_authenticated', 'true');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Login verification failed:', error);
+      return false;
     }
-    return false;
   };
 
   const handleLogout = () => {
