@@ -175,6 +175,29 @@ function buildConversationContext(history) {
     return context + '\n---\n';
 }
 
+// Get knowledge base stats for context
+async function getKnowledgeBaseStats() {
+    const supabase = getSupabase();
+    if (!supabase) return { totalDatasheets: 0, sampleProducts: [] };
+
+    try {
+        const { data: sources } = await supabase
+            .from('pdf_chunks')
+            .select('metadata');
+
+        const uniqueSources = new Set(sources?.map(s => s.metadata?.source).filter(Boolean) || []);
+        const sampleProducts = Array.from(uniqueSources).slice(0, 10).map(s => s.replace(/\.pdf$/i, ''));
+
+        return {
+            totalDatasheets: uniqueSources.size,
+            sampleProducts
+        };
+    } catch (err) {
+        console.error('Failed to get KB stats:', err);
+        return { totalDatasheets: 0, sampleProducts: [] };
+    }
+}
+
 // API Routes
 
 // Password verification
@@ -204,6 +227,10 @@ app.post('/api/chat', async (req, res) => {
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
 
+        // Get knowledge base stats for broad questions
+        const kbStats = await getKnowledgeBaseStats();
+        const kbStatsContext = `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Sample products: ${kbStats.sampleProducts.join(', ')}\n`;
+
         const ai = getAI();
         if (!ai) {
             return res.status(500).json({ error: 'AI service not configured' });
@@ -215,7 +242,7 @@ app.post('/api/chat', async (req, res) => {
             contents: [{
                 role: 'user',
                 parts: [
-                    { text: `${conversationContext}TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || 'No specific PDF matches found.'}` },
+                    { text: `${conversationContext}${kbStatsContext}TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || 'No specific PDF matches found.'}` },
                     ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
                     { text: `CURRENT QUERY: ${query}` }
                 ]
@@ -268,6 +295,10 @@ app.post('/api/chat/stream', async (req, res) => {
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
 
+        // Get knowledge base stats for broad questions
+        const kbStats = await getKnowledgeBaseStats();
+        const kbStatsContext = `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Sample products: ${kbStats.sampleProducts.join(', ')}\n`;
+
         // Send datasheets first
         res.write(`data: ${JSON.stringify({ type: 'datasheets', datasheets: referencedDatasheets })}\n\n`);
 
@@ -282,7 +313,7 @@ app.post('/api/chat/stream', async (req, res) => {
             contents: [{
                 role: 'user',
                 parts: [
-                    { text: `${conversationContext}TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || 'No specific PDF matches found.'}` },
+                    { text: `${conversationContext}${kbStatsContext}TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || 'No specific PDF matches found.'}` },
                     ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
                     { text: `CURRENT QUERY: ${query}` }
                 ]
