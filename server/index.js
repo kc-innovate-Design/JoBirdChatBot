@@ -54,17 +54,14 @@ Provide clean, readable, and highly organized product information.
 FORMATTING RULES (VERY IMPORTANT):
 1. **Bold Headers**: Always use bold headers for different information types (e.g., **Recommended Cabinet**, **Dimensions**, **Key Features**).
 2. **Bullet Points**: Use bullet points for lists of features or benefits.
-3. **Clean Citations**: DO NOT list multiple filenames in the middle of sentences. Instead, at the end of a section or bullet point, simply mention the source once (e.g., "*Source: JB02HR Datasheet*").
-4. **Markdown Indentation**: Ensure proper spacing between paragraphs and sections for maximum readability.
+3. **JoBird Styling**: Use bolding and structured lists to make technical specs pop.
+4. **Clean Citations**: DO NOT list multiple filenames in the middle of sentences. Instead, at the end of a section or bullet point, simply mention the source once (e.g., "*Source: JB02HR Datasheet*").
 
-RESPONSE STYLE:
-- Avoid "walls of text". Break information into small, digestible chunks.
-- Be proactive but concise. If a cabinet's dimensions seem suitable for the user's item, clearly state the dimensions first.
-
-KNOWLEDGE USAGE:
-- Dimensions and technical specs MUST come from the TECHNICAL KNOWLEDGE BASE.
-- You CAN suggest suitability (e.g., "At 937mm height, this cabinet is ideal for storing life jackets").
-- If the knowledge base contains multiple versions of a document, prioritize the most detailed one.
+RESPONSE STRUCTURE:
+- Break information into small, digestible chunks.
+- At the very end of your response, you MUST provide exactly 3 relevant follow-up questions for the user.
+- Format the follow-ups EXACTLY like this:
+  [[FOLLOWUP]] Question 1 | Question 2 | Question 3
 
 CRITICAL RULES:
 1. NEVER hallucinate specs. Use exact numbers from the provided context.
@@ -109,6 +106,8 @@ async function searchPdfChunks(question, matchCount = 10) {
 
             if (keywordData) {
                 for (const chunk of keywordData) {
+                    // FILTER OUT TEST DATA
+                    if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
                     results.push({ ...chunk, similarity: 1.0 }); // High priority for exact keyword match
                     existingIds.add(chunk.id);
                 }
@@ -131,6 +130,8 @@ async function searchPdfChunks(question, matchCount = 10) {
 
             if (vectorData) {
                 for (const chunk of vectorData) {
+                    // FILTER OUT TEST DATA
+                    if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
                     if (!existingIds.has(chunk.id)) {
                         results.push(chunk);
                         existingIds.add(chunk.id);
@@ -420,7 +421,7 @@ app.post('/api/chat', async (req, res) => {
 
         // Generate response
         const response = await ai.models.generateContent({
-            model: 'models/gemini-2.0-flash',
+            model: 'models/gemini-3-flash-preview',
             contents: [{
                 role: 'user',
                 parts: [
@@ -491,7 +492,7 @@ app.post('/api/chat/stream', async (req, res) => {
         }
 
         const response = await ai.models.generateContentStream({
-            model: 'models/gemini-2.0-flash',
+            model: 'models/gemini-3-flash-preview',
             contents: [{
                 role: 'user',
                 parts: [
@@ -591,7 +592,7 @@ app.post('/api/speech', async (req, res) => {
         }
 
         const response = await ai.models.generateContent({
-            model: 'models/gemini-2.0-flash',
+            model: 'models/gemini-3-flash-preview',
             contents: [{ parts: [{ text: `Recommendation: ${text}` }] }],
             config: {
                 responseModalities: [Modality.AUDIO],

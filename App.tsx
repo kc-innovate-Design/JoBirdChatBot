@@ -6,6 +6,16 @@ import Header from './components/Header';
 import ChatInterface from './components/ChatInterface';
 import AdminPanel from './components/AdminPanel';
 import Login from './components/Login';
+import Sidebar from './components/Sidebar';
+import { Message, DatasheetReference } from './types';
+
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  datasheets: DatasheetReference[];
+  timestamp: Date;
+}
 
 type View = 'assistant' | 'admin';
 
@@ -21,6 +31,77 @@ const App: React.FC = () => {
 
   const [selectedModel, setSelectedModel] = useState<CabinetModel | null>(null);
   const [currentView, setCurrentView] = useState<View>('assistant');
+
+  // Multi-session state
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    const defaultSession: ChatSession = {
+      id: 'session-1',
+      title: 'New Selection',
+      messages: [{ role: 'assistant', content: "Hi, how can I help you?", timestamp: new Date() }],
+      datasheets: [],
+      timestamp: new Date()
+    };
+    return [defaultSession];
+  });
+  const [activeSessionId, setActiveSessionId] = useState<string>('session-1');
+
+  const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
+
+  const handleNewChat = () => {
+    const newId = `session-${Date.now()}`;
+    const newSession: ChatSession = {
+      id: newId,
+      title: `New Chat ${sessions.length + 1}`,
+      messages: [{ role: 'assistant', content: "Hi, I'm ready to help with another cabinet selection. What are you looking for?", timestamp: new Date() }],
+      datasheets: [],
+      timestamp: new Date()
+    };
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newId);
+  };
+
+  const handleSelectSession = (id: string) => setActiveSessionId(id);
+
+  const handleDeleteSession = (id: string) => {
+    setSessions(prev => {
+      const filtered = prev.filter(s => s.id !== id);
+      if (filtered.length === 0) {
+        return [{
+          id: 'session-default',
+          title: 'New Selection',
+          messages: [{ role: 'assistant', content: "Hi, how can I help you?", timestamp: new Date() }],
+          datasheets: [],
+          timestamp: new Date()
+        }];
+      }
+      return filtered;
+    });
+    if (activeSessionId === id) {
+      setActiveSessionId(sessions.find(s => s.id !== id)?.id || 'session-default');
+    }
+  };
+
+  const updateActiveSession = (newMessages: Message[], newDatasheets?: DatasheetReference[]) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === activeSessionId) {
+        // Dynamic title based on first user message if title is still default
+        let title = s.title;
+        if (title.startsWith('New Chat') && newMessages.length > 1) {
+          const firstUserMsg = newMessages.find(m => m.role === 'user');
+          if (firstUserMsg) {
+            title = firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
+          }
+        }
+        return {
+          ...s,
+          messages: newMessages,
+          datasheets: newDatasheets || s.datasheets,
+          title
+        };
+      }
+      return s;
+    }));
+  };
 
   const handleLogin = async (password: string): Promise<boolean> => {
     try {
@@ -112,15 +193,28 @@ const App: React.FC = () => {
       </div>
 
       {currentView === 'assistant' ? (
-        <main className="flex-1 w-full p-4 lg:p-8">
-          <div className="max-w-6xl mx-auto">
-            <ChatInterface
-              catalog={catalog}
-              activeSops={activeSops.filter(s => s.status === 'Active')}
-              onSubmitFeedback={handleSubmitFeedback}
-              selectedModel={selectedModel}
-              onOpenAdmin={() => setCurrentView('admin')}
-            />
+        <main className="flex-1 flex overflow-hidden">
+          <Sidebar
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={handleSelectSession}
+            onNewChat={handleNewChat}
+            onDeleteSession={handleDeleteSession}
+          />
+          <div className="flex-1 p-4 lg:p-8 overflow-y-auto bg-slate-50/30">
+            <div className="max-w-6xl mx-auto">
+              <ChatInterface
+                key={activeSessionId}
+                catalog={catalog}
+                activeSops={activeSops.filter(s => s.status === 'Active')}
+                onSubmitFeedback={handleSubmitFeedback}
+                selectedModel={selectedModel}
+                onOpenAdmin={() => setCurrentView('admin')}
+                initialMessages={activeSession.messages}
+                initialDatasheets={activeSession.datasheets}
+                onSessionUpdate={updateActiveSession}
+              />
+            </div>
           </div>
         </main>
       ) : (

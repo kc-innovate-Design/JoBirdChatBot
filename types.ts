@@ -71,6 +71,8 @@ export interface DatasheetReference {
   filename: string;
   displayName: string;
   productName?: string; // e.g. "2 x 30M Fire Hose cabinet"
+  url?: string;
+  source?: string;
 }
 
 export interface AIResponse {

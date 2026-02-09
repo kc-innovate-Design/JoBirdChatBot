@@ -52,224 +52,46 @@ interface ChatInterfaceProps {
   onOpenAdmin: () => void;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ catalog, activeSops, onSubmitFeedback, selectedModel, onOpenAdmin }) => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: "Hi, how can I help you?",
-      timestamp: new Date()
-    }
-  ]);
+const ChatInterface: React.FC<ChatInterfaceProps> = ({
+  catalog, activeSops, onSubmitFeedback, selectedModel, onOpenAdmin,
+  initialMessages, initialDatasheets, onSessionUpdate
+}) => {
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState<number | null>(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [isLiveMode, setIsLiveMode] = useState(false);
-  const [referencedDatasheets, setReferencedDatasheets] = useState<DatasheetReference[]>([]);
+  const [referencedDatasheets, setReferencedDatasheets] = useState<DatasheetReference[]>(initialDatasheets);
 
   const [feedbackTask, setFeedbackTask] = useState('');
   const [feedbackIssue, setFeedbackIssue] = useState('');
   const [feedbackUrgency, setFeedbackUrgency] = useState<'Low' | 'Medium' | 'High'>('Medium');
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const liveSessionRef = useRef<any>(null);
-  const nextStartTimeRef = useRef(0);
-  const audioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  const inputAudioContextRef = useRef<AudioContext | null>(null);
-  const currentInputTranscriptionRef = useRef('');
-  const currentOutputTranscriptionRef = useRef('');
-
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
 
-  const stopLiveMode = () => {
-    if (liveSessionRef.current) {
-      liveSessionRef.current.close();
-      liveSessionRef.current = null;
-    }
-    if (inputAudioContextRef.current) {
-      inputAudioContextRef.current.close();
-      inputAudioContextRef.current = null;
-    }
-    for (const source of audioSourcesRef.current) {
-      try { source.stop(); } catch (e) { }
-    }
-    audioSourcesRef.current.clear();
-    setIsLiveMode(false);
-  };
+  const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
+  const [sessionFiles, setSessionFiles] = useState<{ name: string, content: string }[]>([]);
 
-  const startLiveMode = async () => {
-    if (isLiveMode) {
-      stopLiveMode();
-      return;
-    }
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    try {
-      const liveAi = getAI();
-      if (!liveAi) {
-        setMessages(prev => [...prev, { role: 'assistant', content: "Voice mode is unavailable because the API key is not configured.", timestamp: new Date() }]);
-        setIsLiveMode(false);
-        return;
-      }
-
-      setIsLiveMode(true);
-
-      // Ensure AudioContext is created/resumed on user gesture
-      if (!inputAudioContextRef.current) {
-        inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      }
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      }
-
-      const inputCtx = inputAudioContextRef.current;
-      const outputCtx = audioContextRef.current;
-
-      if (inputCtx.state === 'suspended') await inputCtx.resume();
-      if (outputCtx.state === 'suspended') await outputCtx.resume();
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      const enhancedInstruction = `${SYSTEM_INSTRUCTION}
-      
-DETERMINISTIC CATALOG DATA:
-${JSON.stringify(catalog)}
-
-VOICE MODE SPECIFIC:
-1. You are in a real-time voice conversation.
-2. Keep your spoken responses concise and natural.
-3. However, ensure the transcriptions you generate follow the mandatory section labels (RECOMMENDED CABINET:, INITIAL ASSESSMENT:, etc.) so the UI can format them.
-4. If you suggest a cabinet, say its name clearly.`;
-
-      const aiInstance = getAI();
-      console.log("[Live] Connecting to Gemini Multimodal Live API...");
-      const sessionPromise = (aiInstance as any).live.connect({
-        model: 'models/gemini-2.5-flash-native-audio-latest',
-        callbacks: {
-          onopen: () => {
-            console.log("[Live] Session connected successfully");
-            const source = inputCtx.createMediaStreamSource(stream);
-            const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
-            scriptProcessor.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const l = inputData.length;
-              const int16 = new Int16Array(l);
-              for (let i = 0; i < l; i++) {
-                int16[i] = inputData[i] * 32768;
-              }
-              const pcmBlob: Blob = {
-                data: encode(new Uint8Array(int16.buffer)),
-                mimeType: 'audio/pcm;rate=16000',
-              };
-              if (liveSessionRef.current) {
-                try {
-                  liveSessionRef.current.sendRealtimeInput({ media: pcmBlob });
-                } catch (e) {
-                  liveSessionRef.current = null;
-                }
-              }
-            };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(inputCtx.destination);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent?.outputTranscription) {
-              currentOutputTranscriptionRef.current += message.serverContent.outputTranscription.text;
-            } else if (message.serverContent?.inputTranscription) {
-              currentInputTranscriptionRef.current += message.serverContent.inputTranscription.text;
-            }
-
-            if (message.serverContent?.turnComplete) {
-              const userText = currentInputTranscriptionRef.current.trim();
-              const botText = currentOutputTranscriptionRef.current.trim();
-              if (userText) {
-                setMessages(prev => [...prev, { role: 'user', content: userText, timestamp: new Date() }]);
-              }
-              if (botText) {
-                setMessages(prev => [...prev, { role: 'assistant', content: botText, timestamp: new Date() }]);
-              }
-              currentInputTranscriptionRef.current = '';
-              currentOutputTranscriptionRef.current = '';
-            }
-
-            const base64 = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64) {
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
-              const audioBuffer = await decodeAudioData(decode(base64), outputCtx, 24000, 1);
-              const source = outputCtx.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(outputCtx.destination);
-              source.addEventListener('ended', () => {
-                audioSourcesRef.current.delete(source);
-              });
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              audioSourcesRef.current.add(source);
-            }
-
-            if (message.serverContent?.interrupted) {
-              for (const source of audioSourcesRef.current) {
-                try { source.stop(); } catch (e) { }
-              }
-              audioSourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-            }
-          },
-          onclose: (closeEvent) => {
-            console.log("[Live] Session closed:", closeEvent);
-            liveSessionRef.current = null;
-            setIsLiveMode(false);
-          },
-          onerror: (err) => {
-            console.error("[Live] Session error:", err);
-            liveSessionRef.current = null;
-            setIsLiveMode(false);
-          },
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
-          },
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          systemInstruction: enhancedInstruction
-        },
-      });
-
-      const sessionAi = getAI();
-      if (!sessionAi) throw new Error("AI not initialized");
-      liveSessionRef.current = await sessionPromise;
-    } catch (err) {
-      console.error('Failed to start live mode:', err);
-      setIsLiveMode(false);
-    }
-  };
-
-  const handlePlayAudio = async (text: string, msgIndex: number) => {
-    if (isSpeaking !== null) return;
-    setIsSpeaking(msgIndex);
-    try {
-      const base64 = await generateSelectionSpeech(text);
-      if (!base64) throw new Error("Audio generation failed");
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      }
-      const ctx = audioContextRef.current;
-      const audioBuffer = await decodeAudioData(decode(base64), ctx, 24000, 1);
-      const src = ctx.createBufferSource();
-      src.buffer = audioBuffer;
-      src.connect(ctx.destination);
-      src.onended = () => setIsSpeaking(null);
-      src.start();
-    } catch (e) {
-      console.error(e);
-      setIsSpeaking(null);
-    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      setSessionFiles(prev => [...prev, { name: file.name, content }]);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `I've received your document: **${file.name}**. I will use its contents to help answer your questions during this session.`,
+        timestamp: new Date()
+      }]);
+    };
+    reader.readAsText(file);
   };
 
   const handleSend = async () => {
@@ -281,22 +103,36 @@ VOICE MODE SPECIFIC:
     setIsLoading(true);
 
     // Add a placeholder message for streaming with loading text
-    const streamingMsgId = Date.now();
     const placeholderMsg: Message = { role: 'assistant', content: 'Searching database...', timestamp: new Date() };
-    setMessages(prev => [...prev, placeholderMsg]);
+    const newHistory = [...messages, userMsg, placeholderMsg];
+    setMessages(newHistory);
 
     try {
       // Store datasheets to set after response completes
       let pendingDatasheets: DatasheetReference[] = [];
 
+      // Build enhanced context with uploaded files
+      const enrichedInput = sessionFiles.length > 0
+        ? `USER UPLOADED FILES:\n${sessionFiles.map(f => `[${f.name}]\n${f.content}`).join('\n\n')}\n\nUSER QUESTION: ${userInput}`
+        : userInput;
+
       // Use streaming with callback to update message progressively
-      await getSelectionResponseStream(userInput, messages, (text, datasheets) => {
+      await getSelectionResponseStream(enrichedInput, messages, (text, datasheets) => {
         // Update the last message (our placeholder) with new text
         setMessages(prev => {
           const updated = [...prev];
           const lastIdx = updated.length - 1;
           if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
-            updated[lastIdx] = { ...updated[lastIdx], content: text || 'Searching knowledge base...' };
+            // Check for follow-up questions in the text
+            const parts = text.split('[[FOLLOWUP]]');
+            const cleanText = parts[0].trim();
+            if (parts.length > 1) {
+              const questions = parts[1].split('|').map(q => q.trim()).filter(Boolean);
+              setFollowUpQuestions(questions);
+            } else {
+              setFollowUpQuestions([]);
+            }
+            updated[lastIdx] = { ...updated[lastIdx], content: cleanText || 'Generating response...' };
           }
           return updated;
         });
@@ -309,6 +145,9 @@ VOICE MODE SPECIFIC:
       // Update referenced datasheets only after response is complete
       if (pendingDatasheets.length > 0) {
         setReferencedDatasheets(pendingDatasheets);
+        onSessionUpdate(newHistory, pendingDatasheets);
+      } else {
+        onSessionUpdate(newHistory);
       }
     } catch (error: any) {
       console.error("Selection Error:", error);
@@ -331,6 +170,11 @@ VOICE MODE SPECIFIC:
 
   const handleDatasheetClick = (datasheet: DatasheetReference) => {
     setInput(`Tell me more about ${datasheet.displayName}`);
+    // Points to point 8: Open in new tab
+    if (datasheet.url || datasheet.source) {
+      const url = datasheet.url || `/datasheets/${datasheet.source}`;
+      window.open(url, '_blank');
+    }
   };
 
   const handleFeedbackSubmit = (e: React.FormEvent) => {
@@ -373,38 +217,42 @@ VOICE MODE SPECIFIC:
   };
 
   const formatContent = (content: string) => {
-    let formatted = content.replace(/[*#]/g, '');
-    const headers = [
-      "INITIAL ASSESSMENT", "CLARIFYING QUESTIONS", "RECOMMENDED CABINET",
-      "WHY THIS WAS SELECTED", "INTERNAL LAYOUT", "ASSUMPTIONS", "NEXT STEPS",
-      "TECHNICAL SPECIFICATIONS", "KNOWLEDGE BASE INFORMATION"
-    ];
-    const regex = new RegExp(`(?=${headers.join(':|')}:)`, 'i');
-    const sections = formatted.split(regex);
-
+    // Return segments of bolded or colored text based on markdown-like structure
+    const segments = content.split('\n');
     return (
-      <div className="space-y-3">
-        {sections.map((section, idx) => {
-          const headerMatch = section.match(new RegExp(`^(${headers.join('|')}):`, 'i'));
-          const header = headerMatch ? headerMatch[1] : "";
-          const body = section.replace(headerMatch ? headerMatch[0] : "", "").trim();
-          if (!header && !body) return null;
-          const highlightRegex = /\[\[HIGHLIGHT\]\](.*?)\[\[\/HIGHLIGHT\]\]/g;
-          const isMainAction = header.toUpperCase() === 'RECOMMENDED CABINET' || header.toUpperCase() === 'INITIAL ASSESSMENT' || header.toUpperCase() === 'KNOWLEDGE BASE INFORMATION';
-          return (
-            <div key={idx} className={isMainAction ? 'p-3 bg-jobird-red/5 border-l-2 border-jobird-red' : ''}>
-              {header && (
-                <h5 className="text-[10px] font-black text-jobird-red mb-1 uppercase tracking-widest">
-                  {header}
-                </h5>
-              )}
-              <div className="text-[12px] leading-relaxed whitespace-pre-wrap font-medium text-slate-800">
-                {body.split(highlightRegex).map((part, i) => {
-                  if (i % 2 === 1) return <span key={i} className="text-jobird-red font-black px-1 uppercase">{part}</span>;
-                  return part;
-                })}
+      <div className="space-y-4">
+        {segments.map((line, lid) => {
+          if (line.startsWith('**') && line.endsWith('**')) {
+            return (
+              <h4 key={lid} className="text-[14px] font-black text-jobird-red uppercase tracking-tight mt-4 first:mt-0">
+                {line.replace(/\*\*/g, '')}
+              </h4>
+            );
+          }
+          if (line.trim().startsWith('-')) {
+            return (
+              <div key={lid} className="flex gap-2 text-[13px] leading-relaxed text-slate-700 ml-2">
+                <span className="text-jobird-red font-bold">•</span>
+                <span>{line.trim().substring(1).trim()}</span>
               </div>
-            </div>
+            );
+          }
+          if (line.includes('*Source:')) {
+            return (
+              <div key={lid} className="text-[10px] italic text-slate-400 mt-1">
+                {line.trim()}
+              </div>
+            );
+          }
+          return (
+            <p key={lid} className="text-[13px] leading-relaxed text-slate-800 font-medium">
+              {line.split(/(\*\*.*?\*\*)/).map((part, i) => {
+                if (part.startsWith('**') && part.endsWith('**')) {
+                  return <strong key={i} className="text-jobird-red font-black">{part.replace(/\*\*/g, '')}</strong>;
+                }
+                return part;
+              })}
+            </p>
           );
         })}
       </div>
@@ -415,13 +263,6 @@ VOICE MODE SPECIFIC:
     <div className="flex gap-4 h-[638px]">
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-white border border-slate-200 shadow-2xl relative">
-        {/* Live Mode Pulse Bar */}
-        {isLiveMode && (
-          <div className="absolute top-0 left-0 right-0 h-1 bg-jobird-red z-20 overflow-hidden">
-            <div className="h-full bg-white/40 animate-[shimmer_2s_infinite_linear]" style={{ width: '40%' }}></div>
-          </div>
-        )}
-
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4 bg-white custom-scrollbar">
           {messages.map((msg, idx) => (
             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -435,48 +276,48 @@ VOICE MODE SPECIFIC:
                     }`}>
                     {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[13px] font-bold">{msg.content}</div>}
                   </div>
-                  {msg.role === 'assistant' && !isLiveMode && (msg.content.includes('RECOMMENDED CABINET') || msg.content.includes('INITIAL ASSESSMENT')) && (
-                    <button
-                      onClick={() => handlePlayAudio(msg.content, idx)}
-                      className={`mt-2 w-full bg-slate-100 py-1.5 text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-jobird-red hover:text-white transition-all ${isSpeaking === idx ? 'bg-jobird-red text-white animate-pulse' : ''
-                        }`}
-                    >
-                      <i className={`fas ${isSpeaking === idx ? 'fa-volume-high' : 'fa-volume-low'}`}></i>
-                      Listen to Recommendation
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
           ))}
 
+          {/* Follow-up Questions Panel */}
+          {followUpQuestions.length > 0 && !isLoading && (
+            <div className="flex flex-col gap-2 mt-2 ml-11 items-start">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Suggested Follow-ups:</div>
+              <div className="flex flex-wrap gap-2">
+                {followUpQuestions.map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setInput(q); }}
+                    className="px-4 py-1.5 bg-white border border-slate-200 text-[11px] font-bold text-jobird-red hover:bg-jobird-red hover:text-white transition-all shadow-sm rounded-full"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
 
-        {/* Input Area */}
         <div className="p-5 border-t border-slate-100 bg-jobird-lightGrey">
           <div className="flex gap-3 items-center">
-            <button
-              onClick={startLiveMode}
-              className={`w-[48px] h-[48px] flex-shrink-0 flex items-center justify-center transition-all ${isLiveMode
-                ? 'bg-jobird-red text-white animate-pulse shadow-[0_0_15px_rgba(217,60,35,0.4)]'
-                : 'bg-white border border-slate-200 text-slate-400 hover:text-jobird-red'
-                }`}
-              title={isLiveMode ? "Stop Voice Mode" : "Start Voice Mode"}
-            >
-              <i className={`fas ${isLiveMode ? 'fa-microphone' : 'fa-microphone-slash'} text-lg`}></i>
-            </button>
+            <label className="w-[48px] h-[48px] flex-shrink-0 flex items-center justify-center bg-white border border-slate-200 text-slate-400 hover:text-jobird-red cursor-pointer transition-all transition-all">
+              <input type="file" className="hidden" onChange={handleFileUpload} accept=".txt,.pdf" />
+              <i className="fas fa-paperclip text-lg"></i>
+            </label>
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              disabled={isLiveMode}
-              placeholder={isLiveMode ? "Listening..." : "Ask me anything..."}
+              placeholder="Ask me anything..."
               className="flex-1 px-4 py-3 bg-white border border-slate-200 outline-none text-[13px] font-bold placeholder:text-slate-300 transition-all focus:border-jobird-red disabled:bg-slate-100 shadow-inner"
             />
             <button
               onClick={handleSend}
-              disabled={!input.trim() || isLoading || isLiveMode}
+              disabled={!input.trim() || isLoading}
               className="bg-jobird-red text-white px-8 h-[48px] flex items-center justify-center font-black uppercase text-[11px] tracking-[0.2em] shadow-lg hover:bg-red-700 disabled:opacity-50 transition-all active:scale-95"
             >
               Submit
