@@ -67,7 +67,7 @@ INFERENCE GUIDELINES:
 - Consider weather protection features for outdoor storage needs
 - Use your judgment to match cabinet sizes to typical item dimensions
 - Be clear when you're making a size-based recommendation vs citing explicit specifications
-- PROACTIVELY LIST MODELS: If a user asks for "cabinets for life jackets", don't just say we have them. List 2-3 specific models (e.g. JB17, JB10, JC03) that match their needs based on size.
+- PROACTIVELY LIST MODELS: If a user asks for "cabinets for life jackets", list 2-3 specific models found in the TECHNICAL KNOWLEDGE BASE that match their needs based on size. Do NOT use placeholder model names; only use names found in the sources.
 
 CRITICAL RULES:
 1. Use information from the TECHNICAL KNOWLEDGE BASE - dimensions and specs are accurate
@@ -103,15 +103,32 @@ async function searchPdfChunks(question, matchCount = 8) {
             match_count: matchCount
         });
 
-        if (error) {
-            console.error('Supabase RPC Error:', error);
-            throw error;
+        let results = data || [];
+
+        // If we have few results, try a keyword-based fallback search
+        if (results.length < 3) {
+            console.log('[server] Weak vector match, trying keyword search for:', question);
+            const keywords = question.split(' ').filter(w => w.length > 3);
+            if (keywords.length > 0) {
+                const { data: keywordData } = await supabase
+                    .from('pdf_chunks')
+                    .select('id, content, metadata')
+                    .or(keywords.map(kw => `content.ilike.%${kw}%,metadata->>source.ilike.%${kw}%`).join(','))
+                    .limit(5);
+
+                if (keywordData) {
+                    const existingIds = new Set(results.map(r => r.id));
+                    for (const chunk of keywordData) {
+                        if (!existingIds.has(chunk.id)) {
+                            results.push({ ...chunk, similarity: 0.4 });
+                        }
+                    }
+                }
+            }
         }
 
-        const results = data || [];
-
         // Get sibling chunks for complete context
-        const topSources = [...new Set(results.slice(0, 3).map(r => r.metadata?.source).filter(Boolean))];
+        const topSources = [...new Set(results.slice(0, 5).map(r => r.metadata?.source).filter(Boolean))];
 
         if (topSources.length > 0) {
             const { data: siblingChunks, error: siblingError } = await supabase
