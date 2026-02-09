@@ -357,6 +357,51 @@ function extractDatasheetReferences(searchResults) {
     return Array.from(uniqueSources.values());
 }
 
+// Filter datasheets to only include those actually cited in the AI response
+function filterDatasheetsByCitations(responseText, allDatasheets) {
+    if (!responseText || !allDatasheets || allDatasheets.length === 0) {
+        return [];
+    }
+
+    // Extract source citations like "Source: RS550 Datasheet 2022.pdf" or "Source: JB02HR Datasheet"
+    const sourcePattern = /Source:\s*([^.\n]+(?:\.pdf)?)/gi;
+    const productCodePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Z]*)\*\*/g;
+
+    const citedSources = new Set();
+
+    // Extract from "Source:" citations
+    let match;
+    while ((match = sourcePattern.exec(responseText)) !== null) {
+        const source = match[1].trim().toLowerCase().replace(/\.pdf$/i, '');
+        citedSources.add(source);
+    }
+
+    // Extract from **ProductCode** bold mentions (e.g., **RS550**, **JB02HR**)
+    while ((match = productCodePattern.exec(responseText)) !== null) {
+        const productCode = match[1].toLowerCase();
+        citedSources.add(productCode);
+    }
+
+    // Filter datasheets that match any cited source
+    return allDatasheets.filter(ds => {
+        const filename = ds.filename.toLowerCase().replace(/\.pdf$/i, '');
+        const displayName = ds.displayName.toLowerCase();
+
+        for (const cited of citedSources) {
+            // Check if the cited source appears in filename or displayName
+            if (filename.includes(cited) || displayName.includes(cited) || cited.includes(filename.split(' ')[0])) {
+                return true;
+            }
+            // Also check if the product code from the datasheet matches
+            const dsProductCode = filename.match(/^([a-z]{2,3}[\d.]+[a-z]*)/i);
+            if (dsProductCode && cited.includes(dsProductCode[1].toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    });
+}
+
 // Build conversation context
 function buildConversationContext(history) {
     if (!history || history.length <= 1) return '';
@@ -593,8 +638,7 @@ app.post('/api/chat/stream', async (req, res) => {
         const kbStats = await getKnowledgeBaseStats();
         const kbStatsContext = `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Sample products: ${kbStats.sampleProducts.join(', ')}\n`;
 
-        // Send datasheets first
-        res.write(`data: ${JSON.stringify({ type: 'datasheets', datasheets: referencedDatasheets })}\n\n`);
+        // Don't send datasheets yet - wait until we know which ones are cited
 
         const ai = getAI();
         if (!ai) {
@@ -646,7 +690,10 @@ CRITICAL OVERRIDE:
             }
         }
 
-        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText, datasheets: referencedDatasheets })}\n\n`);
+        // Extract citations from the response and filter datasheets
+        const citedDatasheets = filterDatasheetsByCitations(fullText, referencedDatasheets);
+
+        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText, datasheets: citedDatasheets })}\n\n`);
         res.end();
 
     } catch (error) {
