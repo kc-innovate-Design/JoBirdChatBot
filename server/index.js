@@ -16,9 +16,13 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 const APP_PASSWORD = process.env.APP_PASSWORD || process.env.VITE_APP_PASSWORD || 'jobird2026';
 
-// Initialize clients lazily
 let aiInstance = null;
 let supabaseInstance = null;
+
+// Caching for Knowledge Base stats to prevent hanging
+let kbStatsCache = null;
+let kbStatsLastUpdated = 0;
+const KB_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 function getAI() {
     if (aiInstance) return aiInstance;
@@ -63,6 +67,7 @@ INFERENCE GUIDELINES:
 - Consider weather protection features for outdoor storage needs
 - Use your judgment to match cabinet sizes to typical item dimensions
 - Be clear when you're making a size-based recommendation vs citing explicit specifications
+- PROACTIVELY LIST MODELS: If a user asks for "cabinets for life jackets", don't just say we have them. List 2-3 specific models (e.g. JB17, JB10, JC03) that match their needs based on size.
 
 CRITICAL RULES:
 1. Use information from the TECHNICAL KNOWLEDGE BASE - dimensions and specs are accurate
@@ -131,6 +136,54 @@ async function searchPdfChunks(question, matchCount = 5) {
     }
 }
 
+// Expand short queries into descriptive search terms
+async function expandQuery(query, history) {
+    if (query.length > 30 || query.includes(' ')) {
+        // If it's already a sentence or specific question, no need to expand much
+        // but still worth checking if it's just a "how many" type
+        if (!query.toLowerCase().match(/how many|what are|list|show/)) {
+            return query;
+        }
+    }
+
+    const ai = getAI();
+    if (!ai) return query;
+
+    try {
+        const conversationSummary = (history || []).slice(-3)
+            .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+            .join('\n');
+
+        const result = await ai.models.generateContent({
+            model: 'models/gemini-2.0-flash-lite',
+            contents: [{
+                role: 'user',
+                parts: [{
+                    text: `Based on this conversation history, expand the user's short query into a descriptive search query for a technical manual database.
+                    
+                    HISTORY:
+                    ${conversationSummary}
+                    
+                    QUERY: "${query}"
+                    
+                    RESPONSE: (Just the expanded query, no decoration)`
+                }]
+            }],
+            config: {
+                temperature: 0.1,
+                maxOutputTokens: 50
+            }
+        });
+
+        const expanded = result.response.text().trim().replace(/^"|"$/g, '');
+        console.log(`[server] Expanded "${query}" -> "${expanded}"`);
+        return expanded;
+    } catch (err) {
+        console.error('Query expansion failed:', err);
+        return query;
+    }
+}
+
 // Extract datasheet references from search results
 function extractDatasheetReferences(searchResults) {
     const uniqueSources = new Map();
@@ -195,21 +248,33 @@ async function getKnowledgeBaseStats() {
     const supabase = getSupabase();
     if (!supabase) return { totalDatasheets: 0, sampleProducts: [] };
 
+    const now = Date.now();
+    if (kbStatsCache && (now - kbStatsLastUpdated) < KB_STATS_CACHE_TTL) {
+        return kbStatsCache;
+    }
+
     try {
-        const { data: sources } = await supabase
+        // Use an efficient count query instead of downloading all metadata
+        const { data: sources, error } = await supabase
             .from('pdf_chunks')
-            .select('metadata');
+            .select('metadata')
+            .not('metadata->source', 'is', null);
+
+        if (error) throw error;
 
         const uniqueSources = new Set(sources?.map(s => s.metadata?.source).filter(Boolean) || []);
         const sampleProducts = Array.from(uniqueSources).slice(0, 10).map(s => s.replace(/\.pdf$/i, ''));
 
-        return {
+        kbStatsCache = {
             totalDatasheets: uniqueSources.size,
             sampleProducts
         };
+        kbStatsLastUpdated = now;
+
+        return kbStatsCache;
     } catch (err) {
         console.error('Failed to get KB stats:', err);
-        return { totalDatasheets: 0, sampleProducts: [] };
+        return kbStatsCache || { totalDatasheets: 0, sampleProducts: [] };
     }
 }
 
@@ -247,9 +312,13 @@ app.post('/api/chat', async (req, res) => {
         }
 
         // Search for relevant context
-        console.log('[server] Searching for:', query);
-        const searchResults = await searchPdfChunks(query, 5);
-        console.log('[server] Found', searchResults.length, 'chunks');
+        console.log('[server] Processing query:', query);
+
+        // Expand short or ambiguous queries for better search relevance
+        const expandedQuery = await expandQuery(query, history);
+
+        const searchResults = await searchPdfChunks(expandedQuery, 5);
+        console.log('[server] Search matched', searchResults.length, 'chunks for:', expandedQuery);
 
         const pdfContext = searchResults
             .map(r => `[Source: ${r.metadata?.source}] ${r.content}`)
