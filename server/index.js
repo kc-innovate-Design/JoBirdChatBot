@@ -91,7 +91,7 @@ async function embedQuery(text) {
 }
 
 // Search Supabase for PDF chunks
-async function searchPdfChunks(question, matchCount = 8) {
+async function searchPdfChunks(question, matchCount = 10) {
     const supabase = getSupabase();
     if (!supabase) return [];
 
@@ -103,24 +103,22 @@ async function searchPdfChunks(question, matchCount = 8) {
             match_count: matchCount
         });
 
-        let results = data || [];
-
         // If we have few results, try a keyword-based fallback search
-        if (results.length < 3) {
-            console.log('[server] Weak vector match, trying keyword search for:', question);
-            const keywords = question.split(' ').filter(w => w.length > 3);
+        if (results.length < 4) {
+            const keywords = question.split(' ').filter(w => w.length > 2);
             if (keywords.length > 0) {
+                console.log(`[server] Supplementing with keyword search for: ${keywords.join(', ')}`);
                 const { data: keywordData } = await supabase
                     .from('pdf_chunks')
                     .select('id, content, metadata')
                     .or(keywords.map(kw => `content.ilike.%${kw}%,metadata->>source.ilike.%${kw}%`).join(','))
-                    .limit(5);
+                    .limit(10);
 
                 if (keywordData) {
                     const existingIds = new Set(results.map(r => r.id));
                     for (const chunk of keywordData) {
                         if (!existingIds.has(chunk.id)) {
-                            results.push({ ...chunk, similarity: 0.4 });
+                            results.push({ ...chunk, similarity: 0.3 });
                         }
                     }
                 }
@@ -128,7 +126,7 @@ async function searchPdfChunks(question, matchCount = 8) {
         }
 
         // Get sibling chunks for complete context
-        const topSources = [...new Set(results.slice(0, 5).map(r => r.metadata?.source).filter(Boolean))];
+        const topSources = [...new Set(results.slice(0, 8).map(r => r.metadata?.source).filter(Boolean))];
 
         if (topSources.length > 0) {
             const { data: siblingChunks, error: siblingError } = await supabase
@@ -155,9 +153,9 @@ async function searchPdfChunks(question, matchCount = 8) {
 
 // Expand short queries into descriptive search terms
 async function expandQuery(query, history) {
-    // Skip expansion for alphanumeric part numbers, filenames with underscores, 
-    // or queries that already look like technical terms
-    if (query.match(/^[A-Z]{1,3}\d+/i) || query.includes('_') || query.includes('-')) {
+    // Skip expansion for alphanumeric part numbers anywhere in the query (unanchored regex)
+    // Also skip filenames with underscores/dashes to preserve exact identifiers
+    if (query.match(/[A-Z]{1,3}\d+/i) || query.includes('_') || query.includes('-')) {
         return query;
     }
 
