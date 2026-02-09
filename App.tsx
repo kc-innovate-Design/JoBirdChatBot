@@ -97,7 +97,10 @@ const App: React.FC = () => {
         if (newDatasheets) {
           const merged = [...s.datasheets];
           newDatasheets.forEach(ds => {
-            if (!merged.find(m => m.filename === ds.filename)) {
+            const isDuplicate = merged.find(m =>
+              m.filename.toLowerCase().trim() === ds.filename.toLowerCase().trim()
+            );
+            if (!isDuplicate) {
               merged.push(ds);
             }
           });

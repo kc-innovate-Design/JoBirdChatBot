@@ -52,14 +52,15 @@ CORE GOAL:
 Provide clean, readable, and highly organized product information.
 
 FORMATTING RULES (VERY IMPORTANT):
-1. **Bold Headers**: Always use bold headers for different information types (e.g., **Recommended Cabinet**, **Dimensions**, **Key Features**). NEVER use triple-hash headers (###) or other markdown headers.
-2. **Bullet Points**: Use bullet points for lists of features or benefits.
-3. **JoBird Styling**: Use bolding and structured lists to make technical specs pop.
-4. **Clean Citations**: DO NOT list multiple filenames in the middle of sentences. Instead, at the end of a section or bullet point, simply mention the source once (e.g., "*Source: JB02HR Datasheet*").
+1. **Bold Labels**: Use bold text for headers and labels (e.g., **Recommended Cabinet:**, **Dimensions:**).
+2. **NO Special Markdown Symbols**: NEVER use triple-hash headers (###), asterisks (*) for bullet points, or dashes (-) for lists.
+3. **Clean Lists**: Present features as distinct paragraphs or bolded labels.
+4. **Clean Citations**: DO NOT list multiple filenames in the middle of sentences. Instead, at the end of a section or bullet point, simply mention the source once (e.g., "Source: JB02HR Datasheet").
 
 RESPONSE STRUCTURE:
 - Break information into small, digestible chunks.
-- For complex enquiries with multiple requirements (e.g. Life Jackets AND SCBA AND Fire Hoses), address EACH requirement in its own clearly headed section.
+- For complex enquiries with multiple requirements, address EACH requirement in its own clearly headed (bold) section.
+- NEVER use asterisks or hashes for formatting beyond simple bolding of text.
 - At the very end of your response, you MUST provide exactly 3 suggested follow-up questions for the user to ASK YOU (the AI). These must be from the USER'S point of view.
 - Format the follow-ups EXACTLY like this:
   [[FOLLOWUP]] Question 1 | Question 2 | Question 3
@@ -68,7 +69,8 @@ CRITICAL RULES:
 1. NEVER hallucinate specs. Use exact numbers from the provided context.
 2. If exact info is missing, simply state: "I don't have that specific detail in our technical manuals."
 3. Do not cite "TECHNICAL KNOWLEDGE BASE" as a source; cite the specific PDF filename.
-4. SYNTHESIS: Ensure you address ALL parts of a multi-requirement enquiry using the provided context.`;
+4. SYNTHESIS: Ensure you address ALL parts of a multi-requirement enquiry using the provided context.
+5. NO TEST DATA: If the context contains files with "test" in the name, IGNORE them completely. Use only official JoBird technical documentation.`;
 
 // Embed query using Gemini
 async function embedQuery(text) {
@@ -132,8 +134,13 @@ async function searchPdfChunks(question, matchCount = 10) {
 
             if (vectorData) {
                 for (const chunk of vectorData) {
-                    // FILTER OUT TEST DATA
-                    if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
+                    // STRICT TEST DATA FILTER
+                    const source = (chunk.metadata?.source || '').toLowerCase();
+                    const contentSnippet = (chunk.content || '').toLowerCase();
+                    if (source.includes('test') || contentSnippet.includes('test data')) {
+                        console.log(`[server] Filtering out test chunk: ${source}`);
+                        continue;
+                    }
                     if (!existingIds.has(chunk.id)) {
                         results.push(chunk);
                         existingIds.add(chunk.id);
@@ -156,6 +163,11 @@ async function searchPdfChunks(question, matchCount = 10) {
 
                 if (fallbackData) {
                     for (const chunk of fallbackData) {
+                        // STRICT TEST DATA FILTER
+                        const source = (chunk.metadata?.source || '').toLowerCase();
+                        const contentSnippet = (chunk.content || '').toLowerCase();
+                        if (source.includes('test') || contentSnippet.includes('test data')) continue;
+
                         if (!existingIds.has(chunk.id)) {
                             results.push({ ...chunk, similarity: 0.3 });
                         }
@@ -192,6 +204,11 @@ async function searchPdfChunks(question, matchCount = 10) {
             if (!siblingError && siblingChunks) {
                 const finalExistingIds = new Set(deduplicated.map(r => r.id));
                 for (const chunk of siblingChunks) {
+                    // STRICT TEST DATA FILTER
+                    const source = (chunk.metadata?.source || '').toLowerCase();
+                    const contentSnippet = (chunk.content || '').toLowerCase();
+                    if (source.includes('test') || contentSnippet.includes('test data')) continue;
+
                     if (!finalExistingIds.has(chunk.id)) {
                         deduplicated.push({ ...chunk, similarity: 0.2 });
                     }
@@ -306,6 +323,9 @@ function extractDatasheetReferences(searchResults) {
 
     for (const result of searchResults) {
         const filename = result.metadata?.source;
+        // FINAL SAFETY CHECK FOR TEST DATA
+        if (filename && filename.toLowerCase().includes('test')) continue;
+
         if (filename && !uniqueSources.has(filename)) {
             const displayName = filename
                 .replace(/\.pdf$/i, '')
