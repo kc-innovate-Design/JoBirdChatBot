@@ -45,36 +45,31 @@ function getSupabase() {
 }
 
 // System instruction for the AI
-const SYSTEM_INSTRUCTION = `You are JOBIRD CABINET SELECTION ASSISTANT, a friendly and helpful advisor for JoBird's range of GRP cabinets, chests, and storage solutions.
+// System instruction for the AI
+const SYSTEM_INSTRUCTION = `You are JoBird Cabinet Advisor, a friendly and professional expert for JoBird's high-performance GRP cabinets and storage solutions.
 
-Your role is to help customers find the right storage solution based on their requirements.
+CORE GOAL:
+Provide clean, readable, and highly organized product information.
+
+FORMATTING RULES (VERY IMPORTANT):
+1. **Bold Headers**: Always use bold headers for different information types (e.g., **Recommended Cabinet**, **Dimensions**, **Key Features**).
+2. **Bullet Points**: Use bullet points for lists of features or benefits.
+3. **Clean Citations**: DO NOT list multiple filenames in the middle of sentences. Instead, at the end of a section or bullet point, simply mention the source once (e.g., "*Source: JB02HR Datasheet*").
+4. **Markdown Indentation**: Ensure proper spacing between paragraphs and sections for maximum readability.
 
 RESPONSE STYLE:
-- Be friendly, conversational, and helpful
-- For simple questions (like "how many datasheets?"), give a brief, natural answer WITHOUT citing sources
-- Only use formal headers (INITIAL ASSESSMENT:, RECOMMENDED CABINET:, etc.) when making detailed product recommendations
-- Keep responses concise and easy to read
+- Avoid "walls of text". Break information into small, digestible chunks.
+- Be proactive but concise. If a cabinet's dimensions seem suitable for the user's item, clearly state the dimensions first.
 
-WHEN RECOMMENDING PRODUCTS:
-- Use section headers like RECOMMENDED CABINET:, KEY FEATURES:, WHY THIS WAS SELECTED:
-- Cite the actual PDF filename when providing technical specifications
-- Be thorough but not overly technical
-- You CAN suggest cabinets based on their size, dimensions, and general characteristics even if the specific use case isn't mentioned in the datasheets
-- For example: if asked about storing life jackets, recommend larger cabinets based on their internal dimensions
-
-INFERENCE GUIDELINES:
-- Look at cabinet dimensions (internal height, width, depth) to determine suitability for items
-- Consider weather protection features for outdoor storage needs
-- Use your judgment to match cabinet sizes to typical item dimensions
-- Be clear when you're making a size-based recommendation vs citing explicit specifications
-- PROACTIVELY LIST MODELS: If a user asks for "cabinets for life jackets", list 2-3 specific models found in the TECHNICAL KNOWLEDGE BASE that match their needs based on size. Do NOT use placeholder model names; only use names found in the sources.
+KNOWLEDGE USAGE:
+- Dimensions and technical specs MUST come from the TECHNICAL KNOWLEDGE BASE.
+- You CAN suggest suitability (e.g., "At 937mm height, this cabinet is ideal for storing life jackets").
+- If the knowledge base contains multiple versions of a document, prioritize the most detailed one.
 
 CRITICAL RULES:
-1. Use information from the TECHNICAL KNOWLEDGE BASE - dimensions and specs are accurate
-2. NEVER make up specifications or dimensions
-3. You CAN infer suitability based on dimensions (e.g., "this cabinet's 800mm internal height should accommodate standard life jackets")
-4. ONLY cite actual PDF filenames as sources - never cite "KNOWLEDGE BASE OVERVIEW"
-5. For simple questions, don't add source citations at all`;
+1. NEVER hallucinate specs. Use exact numbers from the provided context.
+2. If exact info is missing, simply state: "I don't have that specific detail in our technical manuals."
+3. Do not cite "TECHNICAL KNOWLEDGE BASE" as a source; cite the specific PDF filename.`;
 
 // Embed query using Gemini
 async function embedQuery(text) {
@@ -273,22 +268,24 @@ function extractDatasheetReferences(searchResults) {
                 .replace(/\.pdf$/i, '')
                 .replace(/_/g, ' ')
                 .replace(/-/g, ' ')
-                .replace(/\s*\(\d+\)$/, '');
+                .replace(/\s*\(\d+\)$/, '')
+                .trim();
 
             let productName;
             const content = result.content || '';
 
-            const pattern1 = content.match(/^[A-Z]{2}[\d.]+[A-Z]*\s+(.+?)\s+Typical use/i);
+            // Improved regex for product name extraction
+            const pattern1 = content.match(/^[A-Z]{2,3}[\d.]+[A-Z]*\s+(.+?)\s+(?:Datasheet|Typical use|Technical Specifications)/i);
             if (pattern1) {
                 productName = pattern1[1].trim();
             } else {
-                const pattern2 = content.match(/^(.+?)\s*\([A-Z]{2}\d+[A-Z]*\)/);
-                if (pattern2 && pattern2[1].length > 8 && pattern2[1].length < 60) {
+                const pattern2 = content.match(/^(.+?)\s*\([A-Z]{2,3}\d+[A-Z]*\)/);
+                if (pattern2 && pattern2[1].length > 5 && pattern2[1].length < 60) {
                     productName = pattern2[1].trim();
                 } else {
-                    const pattern3 = content.match(/Typical use:?\s*For\s+(?:the\s+)?storage\s+of\s+(?:approximately\s+)?(?:\d+\s+)?(.+?)(?:\s+in|\s+\.|\s+This|$)/i);
-                    if (pattern3 && pattern3[1].length > 3 && pattern3[1].length < 40) {
-                        productName = pattern3[1].charAt(0).toUpperCase() + pattern3[1].slice(1) + ' Cabinet';
+                    const pattern3 = content.match(/(?:The|This)\s+(\w+\s+cabinet)/i);
+                    if (pattern3) {
+                        productName = pattern3[1].trim();
                     }
                 }
             }
@@ -402,7 +399,7 @@ app.post('/api/chat', async (req, res) => {
         // Expand short or ambiguous queries for better search relevance
         const expandedQuery = await expandQuery(query, history);
 
-        const searchResults = await searchPdfChunks(expandedQuery, 5);
+        const searchResults = await searchPdfChunks(expandedQuery, 8);
         console.log('[server] Search matched', searchResults.length, 'chunks for:', expandedQuery);
 
         const pdfContext = searchResults
@@ -472,7 +469,7 @@ app.post('/api/chat/stream', async (req, res) => {
         res.setHeader('Connection', 'keep-alive');
 
         // Search for relevant context
-        const searchResults = await searchPdfChunks(query, 5);
+        const searchResults = await searchPdfChunks(query, 8);
         const pdfContext = searchResults
             .map(r => `[Source: ${r.metadata?.source}] ${r.content}`)
             .join('\n\n');
