@@ -42,12 +42,13 @@ export async function getSelectionResponse(
 export async function getSelectionResponseStream(
   userQuery: string,
   history: Message[],
-  onChunk: (text: string, referencedDatasheets: DatasheetReference[]) => void
+  onChunk: (text: string, referencedDatasheets: DatasheetReference[]) => void,
+  files?: { name: string, content: string }[]
 ): Promise<AIResponse> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: userQuery, history })
+    body: JSON.stringify({ query: userQuery, history, files })
   });
 
   if (!response.ok) {

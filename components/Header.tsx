@@ -9,11 +9,14 @@ const Header: React.FC = () => {
         <div className="flex items-center h-full">
           {/* Bird Logo Icon */}
           <div className="flex items-center group cursor-pointer h-full">
-            <img
-              src="/logo.png"
-              alt="JoBird Logo"
-              className="h-10 w-auto object-contain mix-blend-lighten"
-            />
+            <svg
+              viewBox="0 0 100 100"
+              className="h-10 w-10 fill-white"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              {/* Exact bird wing silhouette match */}
+              <path d="M5,65 Q35,60 50,40 Q60,25 90,30 Q75,45 65,75 Q50,95 30,70 Q20,60 5,65 Z" />
+            </svg>
           </div>
         </div>
       </header>

@@ -112,12 +112,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       let pendingDatasheets: DatasheetReference[] = [];
 
       // Build enhanced context with uploaded files
-      const enrichedInput = sessionFiles.length > 0
-        ? `USER UPLOADED FILES:\n${sessionFiles.map(f => `[${f.name}]\n${f.content}`).join('\n\n')}\n\nUSER QUESTION: ${userInput}`
-        : userInput;
+      // Now passed separately to getSelectionResponseStream as a 4th parameter
+      // to avoid query dilution in the backend decomposition logic.
 
       // Use streaming with callback to update message progressively
-      await getSelectionResponseStream(enrichedInput, messages, (text, datasheets) => {
+      await getSelectionResponseStream(userInput, messages, (text, datasheets) => {
         // Update the last message (our placeholder) with new text
         setMessages(prev => {
           const updated = [...prev];
@@ -140,7 +139,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (datasheets.length > 0) {
           pendingDatasheets = datasheets;
         }
-      });
+      }, sessionFiles);
 
       // Update referenced datasheets only after response is complete
       if (pendingDatasheets.length > 0) {

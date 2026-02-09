@@ -520,7 +520,7 @@ CRITICAL OVERRIDE:
 // Streaming chat endpoint
 app.post('/api/chat/stream', async (req, res) => {
     try {
-        const { query, history } = req.body;
+        const { query, history, files } = req.body;
 
         if (!query) {
             return res.status(400).json({ error: 'Query is required' });
@@ -556,6 +556,8 @@ app.post('/api/chat/stream', async (req, res) => {
             .map(r => `[Source: ${r.metadata?.source}] ${r.content}`)
             .join('\n\n');
 
+        const uploadedContext = (files || []).map(f => `[UPLOADED DOCUMENT: ${f.name}]\n${f.content}`).join('\n\n');
+
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
 
@@ -572,12 +574,22 @@ app.post('/api/chat/stream', async (req, res) => {
             return res.end();
         }
 
+        const promptContext = `
+${conversationContext}
+${kbStatsContext}
+
+UPLOADED CONTEXT (PRIORITIZE THIS FOR THE USER'S SPECIFIC ENQUIRY):
+${uploadedContext || 'No files uploaded.'}
+
+TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):
+${pdfContext || 'No specific PDF matches found.'}`;
+
         const response = await ai.models.generateContentStream({
             model: 'models/gemini-3-flash-preview',
             contents: [{
                 role: 'user',
                 parts: [
-                    { text: `${conversationContext}${kbStatsContext}TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || 'No specific PDF matches found.'}` },
+                    { text: promptContext },
                     ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
                     { text: `CURRENT QUERY: ${query}` }
                 ]
