@@ -59,6 +59,7 @@ FORMATTING RULES (VERY IMPORTANT):
 
 RESPONSE STRUCTURE:
 - Break information into small, digestible chunks.
+- For complex enquiries with multiple requirements (e.g. Life Jackets AND SCBA AND Fire Hoses), address EACH requirement in its own clearly headed section.
 - At the very end of your response, you MUST provide exactly 3 relevant follow-up questions for the user.
 - Format the follow-ups EXACTLY like this:
   [[FOLLOWUP]] Question 1 | Question 2 | Question 3
@@ -66,7 +67,8 @@ RESPONSE STRUCTURE:
 CRITICAL RULES:
 1. NEVER hallucinate specs. Use exact numbers from the provided context.
 2. If exact info is missing, simply state: "I don't have that specific detail in our technical manuals."
-3. Do not cite "TECHNICAL KNOWLEDGE BASE" as a source; cite the specific PDF filename.`;
+3. Do not cite "TECHNICAL KNOWLEDGE BASE" as a source; cite the specific PDF filename.
+4. SYNTHESIS: Ensure you address ALL parts of a multi-requirement enquiry using the provided context.`;
 
 // Embed query using Gemini
 async function embedQuery(text) {
@@ -258,6 +260,46 @@ async function expandQuery(query, history) {
     }
 }
 
+// Decompose a complex enquiry into multiple search targets
+async function decomposeEnquiry(query) {
+    if (query.length < 150) return [query]; // Don't decompose short queries
+
+    const ai = getAI();
+    if (!ai) return [query];
+
+    try {
+        const result = await ai.models.generateContent({
+            model: 'models/gemini-2.0-flash-lite',
+            contents: [{
+                role: 'user',
+                parts: [{
+                    text: `Analyze this complex customer enquiry and break it down into 2-4 distinct product categories or technical requirements.
+                    Each category should be a short descriptive search phrase (e.g. "Life Jacket Cabinets Offshore", "SCBA storage with IP56 rating").
+                    
+                    ENQUIRY:
+                    ${query}
+                    
+                    RESPONSE FORMAT:
+                    Phrase 1
+                    Phrase 2
+                    (Just the phrases, one per line)`
+                }]
+            }],
+            config: {
+                temperature: 0.1,
+                maxOutputTokens: 100
+            }
+        });
+
+        const phrases = result.response.text().split('\n').map(p => p.trim()).filter(p => p.length > 5);
+        console.log(`[server] Decomposed enquiry into:`, phrases);
+        return phrases.length > 0 ? phrases : [query];
+    } catch (err) {
+        console.error('Enquiry decomposition failed:', err);
+        return [query];
+    }
+}
+
 // Extract datasheet references from search results
 function extractDatasheetReferences(searchResults) {
     const uniqueSources = new Map();
@@ -397,11 +439,31 @@ app.post('/api/chat', async (req, res) => {
         // Search for relevant context
         console.log('[server] Processing query:', query);
 
-        // Expand short or ambiguous queries for better search relevance
-        const expandedQuery = await expandQuery(query, history);
+        // Expand search for complex queries using decomposition
+        let searchResults = [];
+        if (query.length > 200) {
+            const searchTargets = await decomposeEnquiry(query);
+            const searchPromises = searchTargets.map(target => searchPdfChunks(target, 5));
+            const resultsArrays = await Promise.all(searchPromises);
 
-        const searchResults = await searchPdfChunks(expandedQuery, 8);
-        console.log('[server] Search matched', searchResults.length, 'chunks for:', expandedQuery);
+            // Merge results and deduplicate
+            const seenIds = new Set();
+            for (const arr of resultsArrays) {
+                for (const res of arr) {
+                    if (!seenIds.has(res.id)) {
+                        searchResults.push(res);
+                        seenIds.add(res.id);
+                    }
+                }
+            }
+            // Limit to top 15 for context window management
+            searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
+        } else {
+            const expandedQuery = await expandQuery(query, history);
+            searchResults = await searchPdfChunks(expandedQuery, 10);
+        }
+
+        console.log('[server] Search matched', searchResults.length, 'chunks.');
 
         const pdfContext = searchResults
             .map(r => `[Source: ${r.metadata?.source}] ${r.content}`)
@@ -470,7 +532,26 @@ app.post('/api/chat/stream', async (req, res) => {
         res.setHeader('Connection', 'keep-alive');
 
         // Search for relevant context
-        const searchResults = await searchPdfChunks(query, 8);
+        let searchResults = [];
+        if (query.length > 200) {
+            const searchTargets = await decomposeEnquiry(query);
+            const searchPromises = searchTargets.map(target => searchPdfChunks(target, 6));
+            const resultsArrays = await Promise.all(searchPromises);
+
+            const seenIds = new Set();
+            for (const arr of resultsArrays) {
+                for (const res of arr) {
+                    if (!seenIds.has(res.id)) {
+                        searchResults.push(res);
+                        seenIds.add(res.id);
+                    }
+                }
+            }
+            searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
+        } else {
+            searchResults = await searchPdfChunks(query, 10);
+        }
+
         const pdfContext = searchResults
             .map(r => `[Source: ${r.metadata?.source}] ${r.content}`)
             .join('\n\n');
