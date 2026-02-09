@@ -270,9 +270,9 @@ VOICE MODE SPECIFIC:
     setInput('');
     setIsLoading(true);
 
-    // Add a placeholder message for streaming
+    // Add a placeholder message for streaming with loading text
     const streamingMsgId = Date.now();
-    const placeholderMsg: Message = { role: 'assistant', content: '', timestamp: new Date() };
+    const placeholderMsg: Message = { role: 'assistant', content: 'Searching database...', timestamp: new Date() };
     setMessages(prev => [...prev, placeholderMsg]);
 
     try {
