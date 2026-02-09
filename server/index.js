@@ -96,27 +96,58 @@ async function searchPdfChunks(question, matchCount = 10) {
     if (!supabase) return [];
 
     try {
-        const embedding = await embedQuery(question);
+        console.log(`[server] Hybrid Search for: "${question}"`);
 
-        const { data, error } = await supabase.rpc('match_pdf_chunks', {
+        // 1. Keyword search (very reliable for specific part numbers)
+        const partMatch = question.match(/[A-Z]{1,3}\d+/i);
+        let results = [];
+        const existingIds = new Set();
+
+        if (partMatch) {
+            const partNumber = partMatch[0];
+            console.log(`[server] Part number detected: ${partNumber}. Running priority keyword search.`);
+            const { data: keywordData } = await supabase
+                .from('pdf_chunks')
+                .select('id, content, metadata')
+                .or(`content.ilike.%${partNumber}%,metadata->>source.ilike.%${partNumber}%`)
+                .limit(matchCount);
+
+            if (keywordData) {
+                for (const chunk of keywordData) {
+                    results.push({ ...chunk, similarity: 1.0 }); // High priority for exact keyword match
+                    existingIds.add(chunk.id);
+                }
+            }
+        }
+
+        // 2. Vector search (good for semantic matching)
+        const embedding = await embedQuery(question);
+        const { data: vectorData } = await supabase.rpc('match_pdf_chunks', {
             query_embedding: embedding,
             match_count: matchCount
         });
 
-        // If we have few results, try a keyword-based fallback search
+        if (vectorData) {
+            for (const chunk of vectorData) {
+                if (!existingIds.has(chunk.id)) {
+                    results.push(chunk);
+                    existingIds.add(chunk.id);
+                }
+            }
+        }
+
+        // 3. Broad Keyword Fallback (if still sparse)
         if (results.length < 4) {
-            const keywords = question.split(' ').filter(w => w.length > 2);
+            const keywords = question.split(' ').filter(w => w.length > 2 && !w.match(/tell|about|show|what/i));
             if (keywords.length > 0) {
-                console.log(`[server] Supplementing with keyword search for: ${keywords.join(', ')}`);
-                const { data: keywordData } = await supabase
+                const { data: fallbackData } = await supabase
                     .from('pdf_chunks')
                     .select('id, content, metadata')
                     .or(keywords.map(kw => `content.ilike.%${kw}%,metadata->>source.ilike.%${kw}%`).join(','))
-                    .limit(10);
+                    .limit(5);
 
-                if (keywordData) {
-                    const existingIds = new Set(results.map(r => r.id));
-                    for (const chunk of keywordData) {
+                if (fallbackData) {
+                    for (const chunk of fallbackData) {
                         if (!existingIds.has(chunk.id)) {
                             results.push({ ...chunk, similarity: 0.3 });
                         }
@@ -125,8 +156,24 @@ async function searchPdfChunks(question, matchCount = 10) {
             }
         }
 
+        // Sort by similarity and deduplicate by source to ensure variety
+        results.sort((a, b) => b.similarity - a.similarity);
+
+        const deduplicated = [];
+        const sourceCounts = new Map();
+
+        for (const res of results) {
+            const source = res.metadata?.source;
+            const count = sourceCounts.get(source) || 0;
+            if (count < 2) { // Allow max 2 chunks per source for variety
+                deduplicated.push(res);
+                sourceCounts.set(source, count + 1);
+            }
+            if (deduplicated.length >= matchCount) break;
+        }
+
         // Get sibling chunks for complete context
-        const topSources = [...new Set(results.slice(0, 8).map(r => r.metadata?.source).filter(Boolean))];
+        const topSources = [...new Set(deduplicated.slice(0, 8).map(r => r.metadata?.source).filter(Boolean))];
 
         if (topSources.length > 0) {
             const { data: siblingChunks, error: siblingError } = await supabase
@@ -135,16 +182,16 @@ async function searchPdfChunks(question, matchCount = 10) {
                 .in('metadata->>source', topSources);
 
             if (!siblingError && siblingChunks) {
-                const existingIds = new Set(results.map(r => r.id));
+                const finalExistingIds = new Set(deduplicated.map(r => r.id));
                 for (const chunk of siblingChunks) {
-                    if (!existingIds.has(chunk.id)) {
-                        results.push({ ...chunk, similarity: 0.5 });
+                    if (!finalExistingIds.has(chunk.id)) {
+                        deduplicated.push({ ...chunk, similarity: 0.2 });
                     }
                 }
             }
         }
 
-        return results;
+        return deduplicated;
     } catch (err) {
         console.error('Search failed:', err);
         return [];
