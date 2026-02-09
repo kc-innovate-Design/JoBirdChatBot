@@ -82,41 +82,43 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const content = event.target?.result as string;
-      setSessionFiles(prev => [...prev, { name: file.name, content }]);
-      setMessages(prev => [...prev, {
+      const newFile = { name: file.name, content };
+      const updatedFiles = [...sessionFiles, newFile];
+      setSessionFiles(updatedFiles);
+
+      const assistantMsg: Message = {
         role: 'assistant',
-        content: `I've received your document: **${file.name}**. I will use its contents to help answer your questions during this session.`,
+        content: `I've received your document: **${file.name}**. I am now analyzing the requirements to find the best solutions...`,
         timestamp: new Date()
-      }]);
+      };
+
+      const newHistory = [...messages, assistantMsg];
+      setMessages(newHistory);
+
+      // Automatically trigger synthesis using the new file context
+      // Use a clear, technical prompt to get the best results from the pinned context
+      await processQuery("Please analyze the uploaded requirements and recommend the best JoBird cabinet solutions based on the specifications provided.", newHistory, updatedFiles);
     };
     reader.readAsText(file);
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
-    const userMsg: Message = { role: 'user', content: input, timestamp: new Date() };
-    const userInput = input;
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
+  const processQuery = async (query: string, currentHistory: Message[], filesToUse = sessionFiles) => {
+    if (isLoading) return;
     setIsLoading(true);
 
     // Add a placeholder message for streaming with loading text
     const placeholderMsg: Message = { role: 'assistant', content: 'Searching database...', timestamp: new Date() };
-    const newHistory = [...messages, userMsg, placeholderMsg];
+    const newHistory = [...currentHistory, placeholderMsg];
     setMessages(newHistory);
 
     try {
       // Store datasheets to set after response completes
       let pendingDatasheets: DatasheetReference[] = [];
 
-      // Build enhanced context with uploaded files
-      // Now passed separately to getSelectionResponseStream as a 4th parameter
-      // to avoid query dilution in the backend decomposition logic.
-
       // Use streaming with callback to update message progressively
-      await getSelectionResponseStream(userInput, messages, (text, datasheets) => {
+      await getSelectionResponseStream(query, currentHistory, (text, datasheets) => {
         // Update the last message (our placeholder) with new text
         setMessages(prev => {
           const updated = [...prev];
@@ -139,23 +141,34 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (datasheets.length > 0) {
           pendingDatasheets = datasheets;
         }
-      }, sessionFiles);
+      }, filesToUse);
 
-      // Update referenced datasheets only after response is complete
-      if (pendingDatasheets.length > 0) {
-        setReferencedDatasheets(prev => {
-          const merged = [...prev];
-          pendingDatasheets.forEach(ds => {
-            if (!merged.find(m => m.filename === ds.filename)) {
-              merged.push(ds);
-            }
-          });
-          return merged;
-        });
-        onSessionUpdate(newHistory, pendingDatasheets);
-      } else {
-        onSessionUpdate(newHistory);
-      }
+      // Final local state sync for history
+      setMessages(prev => {
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+          const finalHistory = updated;
+
+          // Update referenced datasheets only after response is complete
+          if (pendingDatasheets.length > 0) {
+            setReferencedDatasheets(prevDs => {
+              const merged = [...prevDs];
+              pendingDatasheets.forEach(ds => {
+                if (!merged.find(m => m.filename === ds.filename)) {
+                  merged.push(ds);
+                }
+              });
+              return merged;
+            });
+            onSessionUpdate(finalHistory, pendingDatasheets);
+          } else {
+            onSessionUpdate(finalHistory);
+          }
+        }
+        return updated;
+      });
+
     } catch (error: any) {
       console.error("Selection Error:", error);
       // Update the placeholder message with the error
@@ -173,6 +186,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+    const userMsg: Message = { role: 'user', content: input, timestamp: new Date() };
+    const queryText = input;
+
+    const newHistory = [...messages, userMsg];
+    setMessages(newHistory);
+    setInput('');
+
+    await processQuery(queryText, newHistory);
   };
 
   const handleDatasheetClick = (datasheet: DatasheetReference) => {
