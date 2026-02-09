@@ -12,7 +12,7 @@ const Header: React.FC = () => {
             <img
               src="/logo.png"
               alt="JoBird Logo"
-              className="h-10 w-auto object-contain"
+              className="h-10 w-auto object-contain mix-blend-lighten"
             />
           </div>
         </div>

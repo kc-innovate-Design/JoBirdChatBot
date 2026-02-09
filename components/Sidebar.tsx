@@ -67,7 +67,7 @@ const Sidebar: React.FC<SidebarProps> = ({ sessions, activeSessionId, onSelectSe
             </div>
 
             <div className="p-4 border-t border-slate-200 bg-white text-center">
-                <img src="/logo.png" alt="JoBird" className="h-6 mx-auto object-contain" />
+                <img src="/logo.png" alt="JoBird" className="h-6 mx-auto object-contain grayscale opacity-20" />
             </div>
         </div>
     );
