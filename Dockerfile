@@ -37,7 +37,11 @@ COPY public/config.json.template ./dist/config.json.template
 
 # Copy script to generate Firebase config at runtime
 COPY generate-config.sh ./generate-config.sh
-RUN chmod +x ./generate-config.sh
+
+# Convert Windows CRLF to Unix LF line endings (in case files have CRLF from Windows)
+RUN sed -i 's/\r$//' ./generate-config.sh && \
+    sed -i 's/\r$//' ./dist/config.json.template && \
+    chmod +x ./generate-config.sh
 
 # Expose port (Cloud Run uses PORT env var, default 8080)
 EXPOSE 8080
