@@ -9,12 +9,14 @@ import { getConfig } from "./lib/config";
 
 let aiInstance: GoogleGenAI | null = null;
 
+// For Live Mode (voice) - uses a separate, restricted API key
 export function getAI() {
   if (aiInstance) return aiInstance;
   const config = getConfig();
-  const apiKey = config.VITE_GEMINI_API_KEY || "";
+  // Use the Live Mode key (restricted, safe for client-side), fall back to main key for local dev
+  const apiKey = config.VITE_GEMINI_LIVE_API_KEY || config.VITE_GEMINI_API_KEY || "";
   aiInstance = apiKey ? new GoogleGenAI({ apiKey }) : null;
-  // Don't log error - we may not have a client-side key in production (which is correct)
+  // Don't log error - we may not have a client-side key in production (which is correct for main chat)
   return aiInstance;
 }
 

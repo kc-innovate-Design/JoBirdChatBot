@@ -12,6 +12,8 @@ export interface AppConfig {
     // These are kept for backwards compatibility but will be empty in production
     // The actual keys are now server-side only
     VITE_GEMINI_API_KEY: string;
+    // Separate restricted key for Live Mode (voice) - safe to expose client-side
+    VITE_GEMINI_LIVE_API_KEY: string;
     VITE_SUPABASE_URL: string;
     VITE_SUPABASE_SERVICE_ROLE_KEY: string;
     VITE_APP_PASSWORD: string;
@@ -38,6 +40,8 @@ export async function loadConfig(): Promise<AppConfig> {
                 VITE_FIREBASE_MEASUREMENT_ID: runtimeConfig.VITE_FIREBASE_MEASUREMENT_ID || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
                 // These stay empty in production - calls go through backend API
                 VITE_GEMINI_API_KEY: runtimeConfig.VITE_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '',
+                // Live Mode key - can be exposed client-side (should be a restricted key)
+                VITE_GEMINI_LIVE_API_KEY: runtimeConfig.VITE_GEMINI_LIVE_API_KEY || import.meta.env.VITE_GEMINI_LIVE_API_KEY || '',
                 VITE_SUPABASE_URL: runtimeConfig.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '',
                 VITE_SUPABASE_SERVICE_ROLE_KEY: '', // NEVER sent to client
                 VITE_APP_PASSWORD: '', // Password verification now done server-side
@@ -62,6 +66,8 @@ export async function loadConfig(): Promise<AppConfig> {
             VITE_FIREBASE_MEASUREMENT_ID: env.VITE_FIREBASE_MEASUREMENT_ID || procEnv.VITE_FIREBASE_MEASUREMENT_ID || '',
             // For local development, these may be set via .env
             VITE_GEMINI_API_KEY: env.VITE_GEMINI_API_KEY || procEnv.VITE_GEMINI_API_KEY || '',
+            // Live Mode key
+            VITE_GEMINI_LIVE_API_KEY: env.VITE_GEMINI_LIVE_API_KEY || procEnv.VITE_GEMINI_LIVE_API_KEY || '',
             VITE_SUPABASE_URL: env.VITE_SUPABASE_URL || procEnv.VITE_SUPABASE_URL || '',
             VITE_SUPABASE_SERVICE_ROLE_KEY: '', // NEVER load this client-side
             VITE_APP_PASSWORD: '', // Password verified server-side
