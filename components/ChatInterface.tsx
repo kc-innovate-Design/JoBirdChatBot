@@ -276,9 +276,6 @@ VOICE MODE SPECIFIC:
     setMessages(prev => [...prev, placeholderMsg]);
 
     try {
-      const sendAi = getAI();
-      if (!sendAi) throw new Error("Gemini AI client not initialized");
-
       // Store datasheets to set after response completes
       let pendingDatasheets: DatasheetReference[] = [];
 
