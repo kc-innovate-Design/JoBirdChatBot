@@ -8,11 +8,11 @@ const Header: React.FC = () => {
       <header className="bg-jobird-red text-white h-[60px] flex items-center px-6 lg:px-12 relative shadow-md">
         <div className="flex items-center h-full">
           {/* Bird Logo Icon */}
-          <div className="bg-white px-3 py-1.5 rounded-sm flex items-center h-10 shadow-sm">
+          <div className="bg-white px-2 py-0.5 rounded-sm flex items-center h-12 shadow-sm">
             <img
               src="/logo_official.png"
               alt="JoBird Logo"
-              className="h-full w-auto object-contain"
+              className="h-10 w-auto object-contain"
             />
           </div>
         </div>

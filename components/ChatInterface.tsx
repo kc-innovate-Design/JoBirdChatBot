@@ -304,7 +304,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   <i className={`fas ${msg.role === 'user' ? 'fa-user-tie' : 'fa-robot'}`}></i>
                 </div>
                 <div className="relative group">
-                  <div className={`p-4 border ${msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
+                  <div className={`py-2 px-4 border ${msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
                     }`}>
                     {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[13px] font-bold">{msg.content}</div>}
                   </div>
