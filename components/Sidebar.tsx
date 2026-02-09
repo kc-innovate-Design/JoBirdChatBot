@@ -37,8 +37,8 @@ const Sidebar: React.FC<SidebarProps> = ({ sessions, activeSessionId, onSelectSe
                     <div
                         key={session.id}
                         className={`group relative p-3 rounded-sm border cursor-pointer transition-all ${activeSessionId === session.id
-                                ? 'bg-white border-jobird-red shadow-sm'
-                                : 'bg-transparent border-transparent hover:bg-slate-200/50'
+                            ? 'bg-white border-jobird-red shadow-sm'
+                            : 'bg-transparent border-transparent hover:bg-slate-200/50'
                             }`}
                         onClick={() => onSelectSession(session.id)}
                     >
@@ -67,7 +67,7 @@ const Sidebar: React.FC<SidebarProps> = ({ sessions, activeSessionId, onSelectSe
             </div>
 
             <div className="p-4 border-t border-slate-200 bg-white text-center">
-                <img src="/logo.png" alt="JoBird" className="h-4 opacity-30 mx-auto" />
+                <img src="/logo.png" alt="JoBird" className="h-6 mx-auto object-contain" />
             </div>
         </div>
     );
