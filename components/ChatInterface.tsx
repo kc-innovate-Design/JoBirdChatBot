@@ -146,11 +146,12 @@ VOICE MODE SPECIFIC:
 4. If you suggest a cabinet, say its name clearly.`;
 
       const aiInstance = getAI();
+      console.log("[Live] Connecting to Gemini Multimodal Live API...");
       const sessionPromise = (aiInstance as any).live.connect({
-        model: 'gemini-3-flash-preview',
+        model: 'models/gemini-2.0-flash',
         callbacks: {
           onopen: () => {
-            console.log("Live session connected");
+            console.log("[Live] Session connected successfully");
             const source = inputCtx.createMediaStreamSource(stream);
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             scriptProcessor.onaudioprocess = (e) => {
@@ -217,8 +218,13 @@ VOICE MODE SPECIFIC:
               nextStartTimeRef.current = 0;
             }
           },
-          onerror: (e) => console.error('Live Error:', e),
-          onclose: () => setIsLiveMode(false),
+          onclose: (closeEvent) => {
+            console.log("[Live] Session closed:", closeEvent);
+            setIsLiveMode(false);
+          },
+          onerror: (err) => {
+            console.error("[Live] Session error:", err);
+          },
         },
         config: {
           responseModalities: [Modality.AUDIO],
