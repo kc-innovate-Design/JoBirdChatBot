@@ -10,7 +10,7 @@ const Header: React.FC = () => {
           {/* Bird Logo Icon */}
           <div className="bg-white px-3 py-1.5 rounded-sm flex items-center h-10 shadow-sm">
             <img
-              src="/logo_full.png"
+              src="/logo_official.png"
               alt="JoBird Logo"
               className="h-full w-auto object-contain"
             />
