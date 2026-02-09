@@ -455,21 +455,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 >
                   <div className="flex items-start gap-2">
                     <i className="fas fa-file-alt text-slate-300 group-hover:text-jobird-red text-xs mt-0.5"></i>
-                    <div>
-                      {ds.productName ? (
-                        <>
-                          <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
-                            {ds.productName}
-                          </div>
-                          <div className="text-[10px] text-slate-500 mt-0.5">
-                            {ds.displayName}
-                          </div>
-                        </>
-                      ) : (
-                        <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
-                          {ds.displayName}
-                        </div>
-                      )}
+                    <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
+                      {ds.displayName}
                     </div>
                   </div>
                 </button>

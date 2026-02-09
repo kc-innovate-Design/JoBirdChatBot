@@ -326,54 +326,25 @@ function extractDatasheetReferences(searchResults) {
         // FINAL SAFETY CHECK FOR TEST DATA
         if (filename && filename.toLowerCase().includes('test')) continue;
 
-        if (filename && !uniqueSources.has(filename)) {
-            const displayName = filename
-                .replace(/\.pdf$/i, '')
-                .replace(/_/g, ' ')
-                .replace(/-/g, ' ')
-                .replace(/\s*\(\d+\)$/, '')
-                .trim();
+        if (filename) {
+            // Normalize for deduplication (case-insensitive, trimmed)
+            const normalizedKey = filename.toLowerCase().trim();
 
-            let productName;
-            const content = result.content || '';
+            if (!uniqueSources.has(normalizedKey)) {
+                // Create clean display name from filename
+                // e.g., "JB38.700SS Safety Station Datasheet 2024.pdf" -> "JB38.700SS Safety Station Datasheet 2024"
+                const displayName = filename
+                    .replace(/\.pdf$/i, '')
+                    .replace(/_/g, ' ')
+                    .replace(/\s*\(\d+\)$/, '') // Remove copy numbers like (1)
+                    .trim();
 
-            // Improved regex for product name extraction
-            const pattern1 = content.match(/^[A-Z]{2,3}[\d.]+[A-Z]*\s+(.+?)\s+(?:Datasheet|Typical use|Technical Specifications)/i);
-            if (pattern1) {
-                productName = pattern1[1].trim();
-            } else {
-                const pattern2 = content.match(/^(.+?)\s*\([A-Z]{2,3}\d+[A-Z]*\)/);
-                if (pattern2 && pattern2[1].length > 5 && pattern2[1].length < 60) {
-                    productName = pattern2[1].trim();
-                } else {
-                    const pattern3 = content.match(/(?:The|This)\s+(\w+\s+cabinet)/i);
-                    if (pattern3) {
-                        productName = pattern3[1].trim();
-                    } else {
-                        // Look for a model code like JB02R or similar early in content
-                        const modelMatch = content.match(/\b([A-Z]{2,3}\d+[A-Z]*\b)/);
-                        if (modelMatch) {
-                            productName = modelMatch[1];
-                        }
-                    }
-                }
+                uniqueSources.set(normalizedKey, {
+                    filename,
+                    displayName,
+                    url: `${SUPABASE_URL}/storage/v1/object/public/datasheets/${encodeURIComponent(filename)}`
+                });
             }
-
-            if (productName) {
-                productName = productName.replace(/[:\-–]$/, '').trim();
-                // If it's just a model code, keep it, otherwise check length
-                if (productName.length < 3) productName = undefined;
-            }
-
-            // Fallback: If no product name found, use the display name but clean it up
-            const finalProductName = productName || displayName;
-
-            uniqueSources.set(filename, {
-                filename,
-                displayName,
-                productName: finalProductName,
-                url: `${SUPABASE_URL}/storage/v1/object/public/datasheets/${encodeURIComponent(filename)}`
-            });
         }
     }
 
