@@ -536,9 +536,32 @@ app.post('/api/chat/stream', async (req, res) => {
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
 
-        // Search for relevant context
+        // Search for relevant context - optimize for file uploads
         let searchResults = [];
-        if (query.length > 200) {
+        const hasFiles = files && files.length > 0;
+
+        if (hasFiles) {
+            // For file uploads, extract key terms from the file content for searching
+            // Limit file content to avoid extremely long decomposition
+            const fileContent = files.map(f => f.content).join('\n').substring(0, 2000);
+            const searchTargets = await decomposeEnquiry(fileContent);
+
+            // Limit to 3 searches max for performance
+            const limitedTargets = searchTargets.slice(0, 3);
+            const searchPromises = limitedTargets.map(target => searchPdfChunks(target, 5));
+            const resultsArrays = await Promise.all(searchPromises);
+
+            const seenIds = new Set();
+            for (const arr of resultsArrays) {
+                for (const res of arr) {
+                    if (!seenIds.has(res.id)) {
+                        searchResults.push(res);
+                        seenIds.add(res.id);
+                    }
+                }
+            }
+            searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 12);
+        } else if (query.length > 200) {
             const searchTargets = await decomposeEnquiry(query);
             const searchPromises = searchTargets.map(target => searchPdfChunks(target, 6));
             const resultsArrays = await Promise.all(searchPromises);
