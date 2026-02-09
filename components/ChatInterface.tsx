@@ -148,7 +148,7 @@ VOICE MODE SPECIFIC:
       const aiInstance = getAI();
       console.log("[Live] Connecting to Gemini Multimodal Live API...");
       const sessionPromise = (aiInstance as any).live.connect({
-        model: 'models/gemini-2.0-flash-exp',
+        model: 'models/gemini-2.5-flash-native-audio-latest',
         callbacks: {
           onopen: () => {
             console.log("[Live] Session connected successfully");
