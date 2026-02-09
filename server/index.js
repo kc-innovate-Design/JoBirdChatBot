@@ -412,8 +412,23 @@ function filterDatasheetsByCitations(responseText, allDatasheets) {
         return false;
     });
 
-    console.log('[filter] Filtered datasheets:', filtered.map(d => d.filename));
-    return filtered;
+    // Deduplicate by product code (keep first occurrence)
+    const seen = new Set();
+    const deduplicated = filtered.filter(ds => {
+        const filename = ds.filename.toLowerCase().replace(/\.pdf$/i, '');
+        const match = filename.match(/^([a-z]{2,3}[\d.]+[a-z]*)/i);
+        const productCode = match ? match[1].toLowerCase() : filename;
+
+        if (seen.has(productCode)) {
+            console.log('[filter] Removing duplicate:', ds.filename);
+            return false;
+        }
+        seen.add(productCode);
+        return true;
+    });
+
+    console.log('[filter] Final datasheets:', deduplicated.map(d => d.filename));
+    return deduplicated;
 }
 
 // Build conversation context
