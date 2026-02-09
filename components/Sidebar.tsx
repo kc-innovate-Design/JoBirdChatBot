@@ -67,13 +67,11 @@ const Sidebar: React.FC<SidebarProps> = ({ sessions, activeSessionId, onSelectSe
             </div>
 
             <div className="p-4 border-t border-slate-200 bg-white text-center">
-                <svg
-                    viewBox="0 0 100 100"
-                    className="h-8 w-8 mx-auto fill-slate-200 grayscale opacity-40"
-                    xmlns="http://www.w3.org/2000/svg"
-                >
-                    <path d="M5,65 Q35,60 50,40 Q60,25 90,30 Q75,45 65,75 Q50,95 30,70 Q20,60 5,65 Z" />
-                </svg>
+                <img
+                    src="/logo_full.png"
+                    alt="JoBird Logo"
+                    className="h-8 mx-auto object-contain"
+                />
             </div>
         </div>
     );
