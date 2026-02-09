@@ -279,6 +279,9 @@ VOICE MODE SPECIFIC:
       const sendAi = getAI();
       if (!sendAi) throw new Error("Gemini AI client not initialized");
 
+      // Store datasheets to set after response completes
+      let pendingDatasheets: DatasheetReference[] = [];
+
       // Use streaming with callback to update message progressively
       await getSelectionResponseStream(userInput, messages, (text, datasheets) => {
         // Update the last message (our placeholder) with new text
@@ -290,11 +293,16 @@ VOICE MODE SPECIFIC:
           }
           return updated;
         });
-        // Update referenced datasheets for the sidebar
+        // Store datasheets for later (after response completes)
         if (datasheets.length > 0) {
-          setReferencedDatasheets(datasheets);
+          pendingDatasheets = datasheets;
         }
       });
+
+      // Update referenced datasheets only after response is complete
+      if (pendingDatasheets.length > 0) {
+        setReferencedDatasheets(pendingDatasheets);
+      }
     } catch (error: any) {
       console.error("Selection Error:", error);
       // Update the placeholder message with the error
@@ -456,7 +464,7 @@ VOICE MODE SPECIFIC:
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               disabled={isLiveMode}
-              placeholder={isLiveMode ? "Listening..." : "please describe your requirements"}
+              placeholder={isLiveMode ? "Listening..." : "Ask me anything..."}
               className="flex-1 px-4 py-3 bg-white border border-slate-200 outline-none text-[13px] font-bold placeholder:text-slate-300 transition-all focus:border-jobird-red disabled:bg-slate-100 shadow-inner"
             />
             <button
