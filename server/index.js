@@ -360,11 +360,13 @@ function extractDatasheetReferences(searchResults) {
 // Filter datasheets to only include those actually cited in the AI response
 function filterDatasheetsByCitations(responseText, allDatasheets) {
     if (!responseText || !allDatasheets || allDatasheets.length === 0) {
+        console.log('[filter] No response or datasheets to filter');
         return [];
     }
 
     // Extract source citations like "Source: RS550 Datasheet 2022.pdf" or "Source: JB02HR Datasheet"
-    const sourcePattern = /Source:\s*([^.\n]+(?:\.pdf)?)/gi;
+    // Updated regex to capture until end of line or period followed by space/newline (to catch .pdf properly)
+    const sourcePattern = /Source:\s*([^\n]+?)(?:\.pdf)?(?:\s|$|\n)/gi;
     const productCodePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Z]*)\*\*/g;
 
     const citedSources = new Set();
@@ -374,32 +376,44 @@ function filterDatasheetsByCitations(responseText, allDatasheets) {
     while ((match = sourcePattern.exec(responseText)) !== null) {
         const source = match[1].trim().toLowerCase().replace(/\.pdf$/i, '');
         citedSources.add(source);
+        console.log('[filter] Found source citation:', source);
     }
 
     // Extract from **ProductCode** bold mentions (e.g., **RS550**, **JB02HR**)
     while ((match = productCodePattern.exec(responseText)) !== null) {
         const productCode = match[1].toLowerCase();
         citedSources.add(productCode);
+        console.log('[filter] Found product code:', productCode);
     }
 
+    console.log('[filter] All cited sources:', Array.from(citedSources));
+    console.log('[filter] Available datasheets:', allDatasheets.map(d => d.filename));
+
     // Filter datasheets that match any cited source
-    return allDatasheets.filter(ds => {
+    const filtered = allDatasheets.filter(ds => {
         const filename = ds.filename.toLowerCase().replace(/\.pdf$/i, '');
-        const displayName = ds.displayName.toLowerCase();
+
+        // Extract product code from filename (e.g., "jb02hr" from "JB02HR Datasheet 2023.pdf")
+        const dsProductCode = filename.match(/^([a-z]{2,3}[\d.]+[a-z]*)/i);
+        const productCode = dsProductCode ? dsProductCode[1].toLowerCase() : '';
 
         for (const cited of citedSources) {
-            // Check if the cited source appears in filename or displayName
-            if (filename.includes(cited) || displayName.includes(cited) || cited.includes(filename.split(' ')[0])) {
+            // Check if filename matches or contains cited source
+            if (filename.includes(cited) || cited.includes(filename)) {
+                console.log('[filter] Match via filename:', ds.filename);
                 return true;
             }
-            // Also check if the product code from the datasheet matches
-            const dsProductCode = filename.match(/^([a-z]{2,3}[\d.]+[a-z]*)/i);
-            if (dsProductCode && cited.includes(dsProductCode[1].toLowerCase())) {
+            // Check if product code matches
+            if (productCode && (cited.includes(productCode) || cited === productCode)) {
+                console.log('[filter] Match via product code:', productCode, 'in', cited);
                 return true;
             }
         }
         return false;
     });
+
+    console.log('[filter] Filtered datasheets:', filtered.map(d => d.filename));
+    return filtered;
 }
 
 // Build conversation context
