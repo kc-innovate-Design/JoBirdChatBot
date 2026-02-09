@@ -92,10 +92,22 @@ const App: React.FC = () => {
             title = firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
           }
         }
+        // Merge datasheets instead of replacing, deduplicating by filename
+        let datasheets = s.datasheets;
+        if (newDatasheets) {
+          const merged = [...s.datasheets];
+          newDatasheets.forEach(ds => {
+            if (!merged.find(m => m.filename === ds.filename)) {
+              merged.push(ds);
+            }
+          });
+          datasheets = merged;
+        }
+
         return {
           ...s,
           messages: newMessages,
-          datasheets: newDatasheets || s.datasheets,
+          datasheets: datasheets,
           title
         };
       }

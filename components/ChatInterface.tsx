@@ -143,7 +143,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       // Update referenced datasheets only after response is complete
       if (pendingDatasheets.length > 0) {
-        setReferencedDatasheets(pendingDatasheets);
+        setReferencedDatasheets(prev => {
+          const merged = [...prev];
+          pendingDatasheets.forEach(ds => {
+            if (!merged.find(m => m.filename === ds.filename)) {
+              merged.push(ds);
+            }
+          });
+          return merged;
+        });
         onSessionUpdate(newHistory, pendingDatasheets);
       } else {
         onSessionUpdate(newHistory);

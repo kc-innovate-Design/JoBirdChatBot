@@ -329,13 +329,20 @@ function extractDatasheetReferences(searchResults) {
                     const pattern3 = content.match(/(?:The|This)\s+(\w+\s+cabinet)/i);
                     if (pattern3) {
                         productName = pattern3[1].trim();
+                    } else {
+                        // Look for a model code like JB02R or similar early in content
+                        const modelMatch = content.match(/\b([A-Z]{2,3}\d+[A-Z]*\b)/);
+                        if (modelMatch) {
+                            productName = modelMatch[1];
+                        }
                     }
                 }
             }
 
             if (productName) {
                 productName = productName.replace(/[:\-–]$/, '').trim();
-                if (productName.length < 5) productName = undefined;
+                // If it's just a model code, keep it, otherwise check length
+                if (productName.length < 3) productName = undefined;
             }
 
             // Fallback: If no product name found, use the display name but clean it up
