@@ -371,8 +371,9 @@ function extractDatasheetReferences(searchResults) {
             uniqueSources.set(filename, {
                 filename,
                 displayName,
-                productName: finalProductName,
-                url: `${SUPABASE_URL}/storage/v1/object/public/datasheets/${filename}`
+                productName: finalProductName
+                // NOTE: PDF URL requires a public Supabase Storage bucket named 'datasheets'
+                // url: `${SUPABASE_URL}/storage/v1/object/public/datasheets/${filename}`
             });
         }
     }
