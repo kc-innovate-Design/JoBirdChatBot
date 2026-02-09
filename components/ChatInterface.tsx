@@ -148,7 +148,7 @@ VOICE MODE SPECIFIC:
       const aiInstance = getAI();
       console.log("[Live] Connecting to Gemini Multimodal Live API...");
       const sessionPromise = (aiInstance as any).live.connect({
-        model: 'models/gemini-2.0-flash',
+        model: 'models/gemini-2.0-flash-exp',
         callbacks: {
           onopen: () => {
             console.log("[Live] Session connected successfully");
@@ -165,11 +165,12 @@ VOICE MODE SPECIFIC:
                 data: encode(new Uint8Array(int16.buffer)),
                 mimeType: 'audio/pcm;rate=16000',
               };
-              const currentAi = getAI();
-              if (currentAi) {
-                sessionPromise.then((session) => {
-                  session.sendRealtimeInput({ media: pcmBlob });
-                });
+              if (liveSessionRef.current) {
+                try {
+                  liveSessionRef.current.sendRealtimeInput({ media: pcmBlob });
+                } catch (e) {
+                  liveSessionRef.current = null;
+                }
               }
             };
             source.connect(scriptProcessor);
@@ -220,10 +221,13 @@ VOICE MODE SPECIFIC:
           },
           onclose: (closeEvent) => {
             console.log("[Live] Session closed:", closeEvent);
+            liveSessionRef.current = null;
             setIsLiveMode(false);
           },
           onerror: (err) => {
             console.error("[Live] Session error:", err);
+            liveSessionRef.current = null;
+            setIsLiveMode(false);
           },
         },
         config: {
