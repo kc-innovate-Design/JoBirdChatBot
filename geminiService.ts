@@ -86,6 +86,8 @@ export async function getSelectionResponseStream(
             } else if (data.type === 'done') {
               fullText = data.text || fullText;
               referencedDatasheets = data.datasheets || referencedDatasheets;
+              // Call onChunk one final time with the filtered datasheets
+              onChunk(fullText, referencedDatasheets);
             } else if (data.type === 'error') {
               throw new Error(data.error);
             }
