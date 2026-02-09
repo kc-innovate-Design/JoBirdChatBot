@@ -206,10 +206,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const handleDatasheetClick = (datasheet: DatasheetReference) => {
     setInput(`Tell me more about ${datasheet.displayName}`);
 
-    // Open the PDF in a new tab
+    // Open the PDF in a new background tab (keep current window active)
     const url = datasheet.url || (datasheet.filename ? `/datasheets/${datasheet.filename}` : undefined);
     if (url) {
-      window.open(url, '_blank');
+      const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+      // Attempt to keep focus on the current window
+      if (newWindow) {
+        window.focus();
+      }
     }
   };
 
