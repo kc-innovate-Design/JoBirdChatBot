@@ -60,7 +60,7 @@ FORMATTING RULES (VERY IMPORTANT):
 RESPONSE STRUCTURE:
 - Break information into small, digestible chunks.
 - For complex enquiries with multiple requirements (e.g. Life Jackets AND SCBA AND Fire Hoses), address EACH requirement in its own clearly headed section.
-- At the very end of your response, you MUST provide exactly 3 relevant follow-up questions for the user.
+- At the very end of your response, you MUST provide exactly 3 suggested follow-up questions for the user to ASK YOU (the AI). These must be from the USER'S point of view.
 - Format the follow-ups EXACTLY like this:
   [[FOLLOWUP]] Question 1 | Question 2 | Question 3
 
@@ -603,7 +603,8 @@ CRITICAL OVERRIDE:
 3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
 4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
 5. ALWAYS cite the source PDF filename.
-6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.`,
+6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
+7. PERSPECTIVE: Suggested follow-up questions must be written as if the USER is asking them to YOU.`,
                 temperature: 0.0
             }
         });
