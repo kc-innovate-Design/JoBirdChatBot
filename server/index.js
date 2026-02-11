@@ -130,7 +130,8 @@ async function searchPdfChunks(question, matchCount = 10) {
         const existingIds = new Set();
 
         // 1. Keyword search (very reliable for specific part numbers)
-        const partMatch = question.match(/[A-Z]{1,3}\d+/i);
+        // Updated regex to catch JoBird codes with dots and suffixes (e.g., JB10.600LJS)
+        const partMatch = question.match(/[A-Z]{2,3}[\d.]+[A-Z]*/i);
         if (partMatch) {
             const partNumber = partMatch[0];
             const { data: keywordData } = await supabase
@@ -166,7 +167,7 @@ async function searchPdfChunks(question, matchCount = 10) {
         if (normalizedQuery.includes(' ')) {
             fuzzyTerms.push(normalizedQuery.replace(/\s+/g, ''));
         }
-        const individualWords = normalizedQuery.split(' ').filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list|cabinets|will|hold/i));
+        const individualWords = normalizedQuery.split(/[\s.\-_]+/).filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list|cabinets|will|hold/i));
         fuzzyTerms = [...new Set([...fuzzyTerms, ...individualWords])];
 
         if (fuzzyTerms.length > 0) {
@@ -245,7 +246,7 @@ async function searchPdfChunks(question, matchCount = 10) {
 async function expandQuery(query, history) {
     // Skip expansion for alphanumeric part numbers anywhere in the query (unanchored regex)
     // Also skip filenames with underscores/dashes to preserve exact identifiers
-    if (query.match(/[A-Z]{1,3}\d+/i) || query.includes('_') || query.includes('-')) {
+    if (query.match(/[A-Z]{2,3}[\d.]+[A-Z]*/i) || query.includes('_') || query.includes('-')) {
         return query;
     }
 
@@ -739,13 +740,19 @@ ${pdfContext || 'No specific PDF matches found.'}`;
             response = await Promise.race([
                 ai.models.generateContentStream({
                     model: chatModel,
-                    contents: [{
-                        role: 'user',
-                        parts: [
-                            { text: promptContext },
-                            { text: `CURRENT QUERY: ${query}` }
-                        ]
-                    }],
+                    contents: [
+                        ...(history || []).map(m => ({
+                            role: m.role === 'user' ? 'user' : 'model',
+                            parts: [{ text: m.content }]
+                        })),
+                        {
+                            role: 'user',
+                            parts: [
+                                { text: promptContext },
+                                { text: `CURRENT QUERY: ${query}` }
+                            ]
+                        }
+                    ],
                     config: {
                         systemInstruction: `${SYSTEM_INSTRUCTION}
     
