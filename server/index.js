@@ -157,7 +157,9 @@ async function searchPdfChunks(question, matchCount = 10) {
             'breathing apparatus': 'ba',
             'fire extinguisher': 'fe',
             'first aid': 'fa',
-            'emergency': 'sos'
+            'emergency': 'sos',
+            'hosepipe': 'hose',
+            'hosepipes': 'hose'
         };
 
         let fuzzyTerms = [];
@@ -649,8 +651,7 @@ app.post('/api/chat/stream', async (req, res) => {
         const ai = getAI();
         const supabase = getSupabase();
 
-        // Initial status update
-        res.write(`data: ${JSON.stringify({ type: 'chunk', text: 'Initializing Cabinet Advisor...' })}\n\n`);
+        // Initial status update - Removed "Initializing" as per user feedback
 
         if (!ai) {
             console.error('[server] AI Instance is NULL. Check environment variables.');
@@ -704,7 +705,7 @@ app.post('/api/chat/stream', async (req, res) => {
             searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
         } else {
             console.log('[server] Step 1/2: Searching knowledge base...');
-            searchResults = await searchPdfChunks(query, 10);
+            searchResults = await searchPdfChunks(query, 15); // Increased to 15 for better broad coverage
         }
 
         const pdfContext = searchResults
@@ -761,9 +762,9 @@ ${pdfContext || 'No specific PDF matches found.'}`;
     2. The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth for all specifications.
     3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
     4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
-    5. ALWAYS cite the source PDF filename.
+    5. ALWAYS cite the source PDF filename for EVERY product mention (e.g. "JB02HR (Source: JB02HR Datasheet.pdf)").
     6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
-    7. PERSPECTIVE: Suggested follow-up questions must be written as if the USER is asking them to YOU.`,
+    7. PERSPECTIVE: Suggested follow-up questions must be relevant to the user's CURRENT query and the newly provided information. Write them as if the USER is asking them to YOU.`,
                         temperature: 0.0
                     }
                 }),
