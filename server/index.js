@@ -27,11 +27,18 @@ const KB_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 function getAI() {
     if (aiInstance) return aiInstance;
-    if (!GEMINI_API_KEY) {
-        console.error('GEMINI_API_KEY not configured');
+
+    // Refresh keys from process.env to be safe in dynamic environments
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+
+    if (!apiKey) {
+        console.error('[server] CRITICAL: GEMINI_API_KEY not configured in process.env');
+        console.log('[server] Available env vars:', Object.keys(process.env).filter(k => k.includes('GEMINI') || k.includes('SUPABASE')));
         return null;
     }
-    aiInstance = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+    console.log('[server] Initializing GoogleGenAI with key length:', apiKey.length);
+    aiInstance = new GoogleGenAI({ apiKey: apiKey });
     return aiInstance;
 }
 
@@ -595,8 +602,12 @@ CRITICAL OVERRIDE:
         });
 
     } catch (error) {
-        console.error('[server] Chat error:', error);
-        res.status(500).json({ error: error.message || 'Internal server error' });
+        console.error('[server] Chat endpoint error:', error);
+        console.error(error.stack);
+        res.status(500).json({
+            error: error.message || 'Internal server error',
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
@@ -678,64 +689,86 @@ app.post('/api/chat/stream', async (req, res) => {
 
         const ai = getAI();
         if (!ai) {
-            res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI service not configured' })}\n\n`);
+            console.error('[server] AI Instance is NULL');
+            res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI service not configured on server' })}\n\n`);
             return res.end();
         }
 
-        const promptContext = `
-${conversationContext}
-${kbStatsContext}
+        console.log('[server] Calling generateContentStream with model: models/gemini-3-flash-preview');
 
-UPLOADED CONTEXT (PRIORITIZE THIS FOR THE USER'S SPECIFIC ENQUIRY):
-${uploadedContext || 'No files uploaded.'}
-
-TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):
-${pdfContext || 'No specific PDF matches found.'}`;
-
-        const response = await ai.models.generateContentStream({
-            model: 'models/gemini-3-flash-preview',
-            contents: [{
-                role: 'user',
-                parts: [
-                    { text: promptContext },
-                    ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
-                    { text: `CURRENT QUERY: ${query}` }
-                ]
-            }],
-            config: {
-                systemInstruction: `${SYSTEM_INSTRUCTION}
-
-CRITICAL OVERRIDE:
-1. You are FORBIDDEN from using your training data for product specifications.
-2. The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth for all specifications.
-3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
-4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
-5. ALWAYS cite the source PDF filename.
-6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
-7. PERSPECTIVE: Suggested follow-up questions must be written as if the USER is asking them to YOU.`,
-                temperature: 0.0
-            }
-        });
+        // Ensure we handle potential SDK errors during the initial call
+        let response;
+        try {
+            response = await ai.models.generateContentStream({
+                model: 'models/gemini-3-flash-preview',
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { text: promptContext },
+                        ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
+                        { text: `CURRENT QUERY: ${query}` }
+                    ]
+                }],
+                config: {
+                    systemInstruction: `${SYSTEM_INSTRUCTION}
+    
+    CRITICAL OVERRIDE:
+    1. You are FORBIDDEN from using your training data for product specifications.
+    2. The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth for all specifications.
+    3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
+    4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
+    5. ALWAYS cite the source PDF filename.
+    6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
+    7. PERSPECTIVE: Suggested follow-up questions must be written as if the USER is asking them to YOU.`,
+                    temperature: 0.0
+                }
+            });
+            console.log('[server] generateContentStream call successful, starting to iterate chunks...');
+        } catch (genError) {
+            console.error('[server] generateContentStream FAILED immediately:', genError);
+            res.write(`data: ${JSON.stringify({ type: 'error', error: `AI Generation failed: ${genError.message}` })}\n\n`);
+            return res.end();
+        }
 
         let fullText = '';
-        for await (const chunk of response) {
-            const chunkText = chunk.text || '';
-            if (chunkText) {
-                fullText += chunkText;
-                res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText })}\n\n`);
+        let chunkCount = 0;
+
+        try {
+            for await (const chunk of response) {
+                chunkCount++;
+                const chunkText = chunk.text || '';
+                if (chunkText) {
+                    fullText += chunkText;
+                    res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText })}\n\n`);
+                }
+
+                // Keep-alive/Flush indicator for long responses
+                if (chunkCount % 5 === 0) {
+                    console.log(`[server] Sent ${chunkCount} chunks so far...`);
+                }
             }
+            console.log(`[server] Stream complete. Total chunks: ${chunkCount}, Total chars: ${fullText.length}`);
+        } catch (streamIterError) {
+            console.error('[server] Error during stream iteration:', streamIterError);
+            res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText + '\n\n[ERROR DURING STREAMING]' })}\n\n`);
         }
 
         // Extract citations from the response and filter datasheets
+        console.log('[server] Extracting citations for final event...');
         const citedDatasheets = filterDatasheetsByCitations(fullText, referencedDatasheets);
 
         res.write(`data: ${JSON.stringify({ type: 'done', text: fullText, datasheets: citedDatasheets })}\n\n`);
         res.end();
 
     } catch (error) {
-        console.error('[server] Stream error:', error);
-        res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
-        res.end();
+        console.error('[server] Top-level Stream endpoint error:', error);
+        console.error(error.stack);
+        try {
+            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+            res.end();
+        } catch (writeErr) {
+            console.error('[server] Failed to write error to stream:', writeErr);
+        }
     }
 });
 
