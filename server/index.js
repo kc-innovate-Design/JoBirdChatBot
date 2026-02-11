@@ -88,7 +88,7 @@ If the user uploads a file (email, quote, spec sheet), treat it as a customer re
 1. Identify the DISTINCT PRODUCT CATEGORIES the customer needs (e.g., "Fire Hose Cabinet", "Electrical PPE Storage").
 2. For EACH category, recommend ONE best-fit JoBird product with a clear explanation of how it matches.
 3. Include key specs: dimensions, IP rating, material, and any relevant options.
-4. After listing recommendations, provide a brief NOTE on any requirements you cannot match.
+4. If no exact-purpose product exists, recommend the CLOSEST general-purpose GRP cabinet that meets the size, environment and protection requirements. JoBird GRP cabinets are versatile and can be used for storage of equipment beyond their primary marketing category.
 5. Keep it concise — the salesperson needs a quick-reference answer, not a feature-by-feature matrix.
 
 FORMATTING RULES:
@@ -673,6 +673,34 @@ RESPONSE: (One search phrase per line, no numbering)`
                     }
                 }
             }
+
+            // Fallback: if any search term found < 2 results, retry with broader terms
+            for (let i = 0; i < searchTerms.length; i++) {
+                if ((resultsArrays[i] || []).length < 2) {
+                    console.log(`[server] Low results for "${searchTerms[i]}", trying broader search...`);
+                    // Extract key nouns and try broader searches
+                    const broaderTerms = [
+                        'GRP storage cabinet weatherproof',
+                        'utility cabinet outdoor marine',
+                        'general purpose cabinet IP56'
+                    ];
+                    for (const broader of broaderTerms) {
+                        try {
+                            const fallbackResults = await searchPdfChunks(broader, 3);
+                            for (const res of fallbackResults) {
+                                if (!seenIds.has(res.id)) {
+                                    searchResults.push(res);
+                                    seenIds.add(res.id);
+                                }
+                            }
+                            if (fallbackResults.length >= 2) break; // got enough
+                        } catch (err) {
+                            console.warn('[server] Fallback search failed:', err.message);
+                        }
+                    }
+                }
+            }
+
             searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 20);
         } else if (query.length > 200) {
             const searchTargets = await decomposeEnquiry(query);
