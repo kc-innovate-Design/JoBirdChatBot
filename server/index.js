@@ -636,10 +636,24 @@ app.post('/api/chat/stream', async (req, res) => {
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no'); // Disable buffering for Nginx/Proxies
         res.flushHeaders(); // Ensure headers are sent immediately
 
-        // Send a heartbeat/status immediately to show activity
-        res.write(`data: ${JSON.stringify({ type: 'chunk', text: 'Analyzing requirements...' })}\n\n`);
+        const ai = getAI();
+        const supabase = getSupabase();
+
+        // Immediate feedback chunk
+        const status = {
+            type: 'chunk',
+            text: `[DEBUG] Connection established. AI: ${ai ? 'OK' : 'MISSING'}, DB: ${supabase ? 'OK' : 'MISSING'}\n\nAnalyzing requirements...`
+        };
+        res.write(`data: ${JSON.stringify(status)}\n\n`);
+
+        if (!ai) {
+            console.error('[server] AI Instance is NULL. Check environment variables.');
+            res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI service not configured on server. Please check Cloud Run secrets.' })}\n\n`);
+            return res.end();
+        }
 
         // Search for relevant context - optimize for file uploads
         let searchResults = [];
@@ -700,8 +714,6 @@ app.post('/api/chat/stream', async (req, res) => {
         const kbStatsContext = `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Sample products: ${kbStats.sampleProducts.join(', ')}\n`;
 
         // Don't send datasheets yet - wait until we know which ones are cited
-
-        const ai = getAI();
         if (!ai) {
             console.error('[server] AI Instance is NULL');
             res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI service not configured on server' })}\n\n`);
@@ -827,6 +839,24 @@ app.post('/api/search', async (req, res) => {
         console.error('[server] Search error:', error);
         res.status(500).json({ error: error.message || 'Internal server error' });
     }
+});
+
+// Diagnostic endpoint to check configuration without exposing secrets
+app.get('/api/diag', (req, res) => {
+    const vars = Object.keys(process.env)
+        .filter(k => k.includes('GEMINI') || k.includes('SUPABASE') || k.includes('FIREBASE') || k.includes('PASSWORD'))
+        .reduce((acc, key) => {
+            acc[key] = process.env[key] ? `set (length: ${process.env[key].length})` : 'MISSING';
+            return acc;
+        }, {});
+
+    res.json({
+        node_env: process.env.NODE_ENV,
+        port: process.env.PORT,
+        vars,
+        ai_initialized: !!aiInstance,
+        supabase_initialized: !!supabaseInstance
+    });
 });
 
 // Text-to-speech endpoint
