@@ -550,7 +550,7 @@ app.get('/api/config', (req, res) => {
 });
 
 // Chat endpoint
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat/stream', async (req, res) => {
     try {
         const { query, history } = req.body;
 
