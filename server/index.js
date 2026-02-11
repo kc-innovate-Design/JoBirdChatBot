@@ -180,33 +180,59 @@ async function searchPdfChunks(question, matchCount = 10) {
             console.warn(`[server] Vector Search skipped/failed: ${vErr.message}`);
         }
 
-        // 3. Keyword Search (Always run for better coverage of broad categories)
-        // Normalize common terms like "life jacket" to also match "lifejacket"
-        let searchTerms = [question];
-        if (question.toLowerCase().includes('life jacket')) {
-            searchTerms.push(question.toLowerCase().replace('life jacket', 'lifejacket'));
-        } else if (question.toLowerCase().includes('lifejacket')) {
-            searchTerms.push(question.toLowerCase().replace('lifejacket', 'life jacket'));
+        // 3. Robust Fuzzy Keyword Match (Ensures specific categories like Lifejackets are caught)
+        const normalizedQuery = question.toLowerCase();
+
+        // Map common synonyms to ensure they match PDF identifiers
+        const synonymMap = {
+            'life jacket': 'lifejacket',
+            'life jackets': 'lifejacket',
+            'breathing apparatus': 'ba',
+            'fire extinguisher': 'fe',
+            'first aid': 'fa',
+            'emergency': 'sos',
+            'cabinet': 'datasheet',
+            'dimensions': 'spec'
+        };
+
+        let fuzzyTerms = [normalizedQuery];
+
+        // Add mapped synonyms if found in the query
+        Object.entries(synonymMap).forEach(([phrase, synonym]) => {
+            if (normalizedQuery.includes(phrase)) {
+                fuzzyTerms.push(synonym);
+            }
+        });
+
+        // Add "squashed" versions (removing spaces) to catch things like "lifejacket"
+        if (normalizedQuery.includes(' ')) {
+            fuzzyTerms.push(normalizedQuery.replace(/\s+/g, ''));
         }
 
-        const keywords = searchTerms.join(' ').split(' ').filter(w => w.length > 2 && !w.match(/tell|about|show|what|are|the|have|for|with/i));
+        // Extract individual words that are significant
+        const individualWords = normalizedQuery.split(' ').filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list/i));
+        fuzzyTerms = [...new Set([...fuzzyTerms, ...individualWords])];
 
-        if (keywords.length > 0) {
-            console.log(`[server] Running Keyword search for: ${keywords.join(', ')}`);
-            const { data: keywordFallbackData } = await supabase
+        if (fuzzyTerms.length > 0) {
+            console.log(`[server] Running Robust Fuzzy Match for: ${fuzzyTerms.join(', ')}`);
+
+            // Build a single "OR" query for all fuzzy terms
+            const orQuery = fuzzyTerms.map(term => `content.ilike.%${term}%,metadata->>source.ilike.%${term}%`).join(',');
+
+            const { data: fuzzyData } = await supabase
                 .from('pdf_chunks')
                 .select('id, content, metadata')
-                .or(keywords.map(kw => `content.ilike.%${kw}%,metadata->>source.ilike.%${kw}%`).join(','))
+                .or(orQuery)
                 .limit(matchCount);
 
-            if (keywordFallbackData) {
-                for (const chunk of keywordFallbackData) {
+            if (fuzzyData) {
+                for (const chunk of fuzzyData) {
                     const source = (chunk.metadata?.source || '').toLowerCase();
                     const contentSnippet = (chunk.content || '').toLowerCase();
                     if (source.includes('test') || contentSnippet.includes('test data')) continue;
 
                     if (!existingIds.has(chunk.id)) {
-                        results.push({ ...chunk, similarity: 0.5 }); // Higher priority than random vector matches
+                        results.push({ ...chunk, similarity: 0.6 }); // Significant boost for targeted keywords
                         existingIds.add(chunk.id);
                     }
                 }
