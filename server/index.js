@@ -663,12 +663,8 @@ app.post('/api/chat/stream', async (req, res) => {
         const ai = getAI();
         const supabase = getSupabase();
 
-        // Immediate feedback chunk
-        const status = {
-            type: 'chunk',
-            text: `[DEBUG] Connection established. AI: ${ai ? 'OK' : 'MISSING'}, DB: ${supabase ? 'OK' : 'MISSING'}\n\nAnalyzing requirements...`
-        };
-        res.write(`data: ${JSON.stringify(status)}\n\n`);
+        // Initial status update
+        res.write(`data: ${JSON.stringify({ type: 'chunk', text: 'Initializing Cabinet Advisor...' })}\n\n`);
 
         if (!ai) {
             console.error('[server] AI Instance is NULL. Check environment variables.');
@@ -755,23 +751,25 @@ ${pdfContext || 'No specific PDF matches found.'}`;
         }
 
         res.write(`data: ${JSON.stringify({ type: 'chunk', text: `\n\n*Step ${hasFiles ? '3/3' : '2/2'}: Consulting AI Advisor...*` })}\n\n`);
-        console.log('[server] Calling generateContentStream with model: models/gemini-3-flash-preview');
+        const chatModel = 'models/gemini-2.0-flash-lite';
+        console.log(`[server] Calling generateContentStream with model: ${chatModel}`);
 
-        // Ensure we handle potential SDK errors during the initial call
         let response;
         try {
-            response = await ai.models.generateContentStream({
-                model: 'models/gemini-3-flash-preview',
-                contents: [{
-                    role: 'user',
-                    parts: [
-                        { text: promptContext },
-                        ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
-                        { text: `CURRENT QUERY: ${query}` }
-                    ]
-                }],
-                config: {
-                    systemInstruction: `${SYSTEM_INSTRUCTION}
+            // Attempt generation with a strict timeout
+            response = await Promise.race([
+                ai.models.generateContentStream({
+                    model: chatModel,
+                    contents: [{
+                        role: 'user',
+                        parts: [
+                            { text: promptContext },
+                            ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
+                            { text: `CURRENT QUERY: ${query}` }
+                        ]
+                    }],
+                    config: {
+                        systemInstruction: `${SYSTEM_INSTRUCTION}
     
     CRITICAL OVERRIDE:
     1. You are FORBIDDEN from using your training data for product specifications.
@@ -781,13 +779,15 @@ ${pdfContext || 'No specific PDF matches found.'}`;
     5. ALWAYS cite the source PDF filename.
     6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
     7. PERSPECTIVE: Suggested follow-up questions must be written as if the USER is asking them to YOU.`,
-                    temperature: 0.0
-                }
-            });
+                        temperature: 0.0
+                    }
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('AI Generation Timeout')), 25000))
+            ]);
             console.log('[server] generateContentStream call successful, starting to iterate chunks...');
         } catch (genError) {
-            console.error('[server] generateContentStream FAILED immediately:', genError);
-            res.write(`data: ${JSON.stringify({ type: 'error', error: `AI Generation failed: ${genError.message}` })}\n\n`);
+            console.error('[server] generateContentStream FAILED:', genError.message);
+            res.write(`data: ${JSON.stringify({ type: 'error', error: `AI Advisor is currently busy or unavailable. Please try again in 30 seconds. (Error: ${genError.message})` })}\n\n`);
             return res.end();
         }
 
