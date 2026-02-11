@@ -725,7 +725,9 @@ app.post('/api/chat/stream', async (req, res) => {
 
         // Get knowledge base stats for broad questions
         const kbStats = await getKnowledgeBaseStats();
-        const kbStatsContext = `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Sample products: ${kbStats.sampleProducts.join(', ')}\n`;
+        const kbStatsContext = (searchResults.length < 3 && !query.toLowerCase().includes('how many') && !query.toLowerCase().includes('total'))
+            ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration: ${kbStats.sampleProducts.slice(0, 5).join(', ')}\n`
+            : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
 
         const promptContext = `
 ${conversationContext}
