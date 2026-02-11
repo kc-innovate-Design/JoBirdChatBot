@@ -583,7 +583,9 @@ app.post('/api/chat', async (req, res) => {
 
         // Get knowledge base stats for broad questions
         const kbStats = await getKnowledgeBaseStats();
-        const kbStatsContext = `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Sample products: ${kbStats.sampleProducts.join(', ')}\n`;
+        const kbStatsContext = searchResults.length < 3 
+            ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration: ${kbStats.sampleProducts.slice(0, 5).join(', ')}\n`
+            : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
 
         const ai = getAI();
         if (!ai) {
@@ -768,7 +770,9 @@ ${pdfContext || 'No specific PDF matches found.'}`;
     4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
     5. ALWAYS cite the source PDF filename for EVERY product mention (e.g. "JB02HR (Source: JB02HR Datasheet.pdf)").
     6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
-    7. PERSPECTIVE: Suggested follow-up questions must be relevant to the user's CURRENT query and the newly provided information. Write them as if the USER is asking them to YOU.`,
+    7. PERSPECTIVE: Suggested follow-up questions must be TIGHTLY COUPLED to the user's CURRENT query and the newly provided information.
+    8. IRRELEVANCE BLOCK: Do NOT suggest a question about a specific product (e.g. "What is the IP rating of JB29?") if that product was not mentioned in your response or the user's query. Suggest category or general questions instead for broad enquiries.
+    9. Write follow-up questions as if the USER is asking them to YOU.`,
                         temperature: 0.0
                     }
                 }),
