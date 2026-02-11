@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import 'dotenv/config';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 
@@ -458,15 +459,17 @@ async function getKnowledgeBaseStats() {
     }
 
     try {
-        // Use an efficient count query instead of downloading all metadata
+        console.log('[server] Updating Knowledge Base stats...');
+        // Optimized: Only fetch unique sources directly if possible, or use a more targeted query
+        // For now, selecting only the source column from metadata
         const { data: sources, error } = await supabase
             .from('pdf_chunks')
-            .select('metadata')
+            .select('metadata->source')
             .not('metadata->source', 'is', null);
 
         if (error) throw error;
 
-        const uniqueSources = new Set(sources?.map(s => s.metadata?.source).filter(Boolean) || []);
+        const uniqueSources = new Set(sources?.map(s => s.source).filter(Boolean) || []);
         const sampleProducts = Array.from(uniqueSources).slice(0, 10).map(s => s.replace(/\.pdf$/i, ''));
 
         kbStatsCache = {
@@ -475,6 +478,7 @@ async function getKnowledgeBaseStats() {
         };
         kbStatsLastUpdated = now;
 
+        console.log(`[server] KB Stats updated: ${kbStatsCache.totalDatasheets} datasheets found.`);
         return kbStatsCache;
     } catch (err) {
         console.error('Failed to get KB stats:', err);
@@ -605,6 +609,8 @@ app.post('/api/chat/stream', async (req, res) => {
             return res.status(400).json({ error: 'Query is required' });
         }
 
+        console.log('[server] Starting stream for query:', query);
+
         // Set up SSE
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
@@ -615,6 +621,7 @@ app.post('/api/chat/stream', async (req, res) => {
         const hasFiles = files && files.length > 0;
 
         if (hasFiles) {
+            console.log('[server] Processing files for context...');
             // For file uploads, extract key terms from the file content for searching
             // Limit file content to avoid extremely long decomposition
             const fileContent = files.map(f => f.content).join('\n').substring(0, 2000);
