@@ -90,10 +90,10 @@ FORMATTING RULES:
 4. Source citation at the end only if relevant (e.g., "Source: JB02HR Datasheet.pdf").
 
 FOLLOW-UP QUESTIONS:
-At the end, provide exactly 3 datasheet-related follow-up questions.
+At the end, provide exactly 4 datasheet-related follow-up questions.
 If you listed multiple products, make the questions COMPARATIVE (e.g., "How do the storage capacities compare?", "Which is the most compact option?", "Do they share the same IP rating?").
 If you mentioned only one product, make them specific to that product.
-Format: [[FOLLOWUP]] Question 1 | Question 2 | Question 3
+Format: [[FOLLOWUP]] Question 1 | Question 2 | Question 3 | Question 4
 
 RULES:
 1. NEVER hallucinate specs - use exact numbers from context.

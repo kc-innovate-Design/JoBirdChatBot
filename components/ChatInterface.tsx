@@ -257,6 +257,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const formatContent = (content: string) => {
+    // Highlight product codes in text (e.g., JB10.600LJ, JB02HR, RS550)
+    const highlightProductCodes = (text: string) => {
+      // Split on product codes, keeping the codes as separate segments
+      const parts = text.split(/\b([A-Z]{2,3}[\d.]+[A-Z]*)\b/);
+      return parts.map((part, i) => {
+        if (/^[A-Z]{2,3}[\d.]+[A-Z]*$/.test(part)) {
+          return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{part}</strong>;
+        }
+        return part;
+      });
+    };
+
     // Return segments of bolded or colored text based on markdown-like structure
     const segments = content.split('\n');
     return (
@@ -264,7 +276,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         {segments.map((line, lid) => {
           if (line.startsWith('**') && line.endsWith('**')) {
             return (
-              <h4 key={lid} className="text-[14px] font-black text-jobird-red uppercase tracking-tight mt-4 first:mt-0">
+              <h4 key={lid} className="text-[14px] font-black uppercase tracking-tight mt-4 first:mt-0" style={{ color: '#D94637' }}>
                 {line.replace(/\*\*/g, '')}
               </h4>
             );
@@ -272,8 +284,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           if (line.trim().startsWith('-')) {
             return (
               <div key={lid} className="flex gap-2 text-[13px] leading-relaxed text-slate-700 ml-2">
-                <span className="text-jobird-red font-bold">•</span>
-                <span>{line.trim().substring(1).trim()}</span>
+                <span className="font-bold" style={{ color: '#D94637' }}>•</span>
+                <span>{highlightProductCodes(line.trim().substring(1).trim())}</span>
               </div>
             );
           }
@@ -288,9 +300,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <p key={lid} className="text-[13px] leading-relaxed text-slate-800 font-medium">
               {line.split(/(\*\*.*?\*\*)/).map((part, i) => {
                 if (part.startsWith('**') && part.endsWith('**')) {
-                  return <strong key={i} className="text-jobird-red font-black">{part.replace(/\*\*/g, '')}</strong>;
+                  const inner = part.replace(/\*\*/g, '');
+                  return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
                 }
-                return part;
+                return <React.Fragment key={i}>{highlightProductCodes(part)}</React.Fragment>;
               })}
             </p>
           );
