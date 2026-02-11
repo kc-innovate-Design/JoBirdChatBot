@@ -551,8 +551,15 @@ app.get('/api/config', (req, res) => {
 
 // Chat endpoint
 app.post('/api/chat/stream', async (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
     try {
-        const { query, history } = req.body;
+        const { query, history, files } = req.body;
+        const uploadedContext = (files || [])
+            .map(f => `[File: ${f.name}]\n${f.content}`)
+            .join('\n\n');
 
         if (!query) {
             return res.status(400).json({ error: 'Query is required' });
