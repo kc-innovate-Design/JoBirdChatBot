@@ -107,10 +107,13 @@ async function embedQuery(text) {
     if (!ai) throw new Error('Gemini not configured');
 
     console.log(`[server] Getting embedding for text (length: ${text.length})...`);
-    const model = ai.getGenerativeModel({ model: 'text-embedding-004' });
 
     const result = await Promise.race([
-        model.embedContent(text),
+        ai.models.embedContent({
+            model: 'gemini-embedding-001',
+            content: text,
+            config: { outputDimensionality: 768 }
+        }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
     ]);
 
@@ -245,7 +248,7 @@ async function searchPdfChunks(question, matchCount = 10) {
 
 // Expand short queries into descriptive search terms
 async function expandQuery(query, history) {
-        const isMetaQuery = query.toLowerCase().includes('category') || query.toLowerCase().includes('list of') || query.toLowerCase().includes('what classes') || query.toLowerCase().includes('what sections');
+    const isMetaQuery = query.toLowerCase().includes('category') || query.toLowerCase().includes('list of') || query.toLowerCase().includes('what classes') || query.toLowerCase().includes('what sections');
 
     if (query.match(/[A-Z]{2,3}[\d.]+[A-Z]*/i) || query.includes('_') || query.includes('-') || isMetaQuery) {
         return query;
@@ -495,7 +498,7 @@ async function getKnowledgeBaseStats() {
         if (error) throw error;
 
         const uniqueSources = new Set(sources?.map(s => s.source).filter(Boolean) || []);
-        
+
         kbStatsCache = {
             totalDatasheets: uniqueSources.size > 0 ? uniqueSources.size : 183, // Fallback to approx count if scan is limited
             sampleProducts: Array.from(uniqueSources).slice(0, 15).map(s => s.replace(/\.pdf$/i, '')),
@@ -551,7 +554,7 @@ app.post('/api/chat/stream', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    
+
     // Immediate heartbeat/progress to prevent browser timeout
     res.write('data: ' + JSON.stringify({ type: 'status', message: 'Analyzing query...' }) + '\n\n');
 
@@ -605,7 +608,7 @@ app.post('/api/chat/stream', async (req, res) => {
         const kbStats = await getKnowledgeBaseStats();
         // Smarter Context: If it's a "how many" or "list categories" query, provide structural info
         const isBroad = searchResults.length < 3 || query.toLowerCase().includes('how many') || query.toLowerCase().includes('list') || query.toLowerCase().includes('categories');
-        
+
         const kbStatsContext = isBroad
             ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Standard Product Categories:\n  * ${kbStats.categories.join('\n  * ')}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration (if needed): ${kbStats.sampleProducts.slice(0, 8).join(', ')}\n`
             : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
@@ -623,15 +626,15 @@ ${pdfContext || 'No specific PDF matches found.'}`;
         res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
         const chatModel = 'models/gemini-2.0-flash-lite';
         const ai = getAI();
-        const model = ai.getGenerativeModel({ model: chatModel });
-        
+
         console.log(`[server] Calling generateContentStream with model: ${chatModel}`);
 
         let response;
         try {
             // Attempt generation with a strict timeout
             response = await Promise.race([
-                model.generateContentStream({
+                ai.models.generateContentStream({
+                    model: chatModel,
                     contents: [
                         ...(history || []).map(m => ({
                             role: m.role === 'user' ? 'user' : 'model',
@@ -645,7 +648,7 @@ ${pdfContext || 'No specific PDF matches found.'}`;
                             ]
                         }
                     ],
-                    generationConfig: {
+                    config: {
                         systemInstruction: `${SYSTEM_INSTRUCTION}
     
     CRITICAL OVERRIDE:
@@ -674,9 +677,9 @@ ${pdfContext || 'No specific PDF matches found.'}`;
         let chunkCount = 0;
 
         try {
-            for await (const chunk of response.stream) {
+            for await (const chunk of response) {
                 chunkCount++;
-                const chunkText = chunk.text();
+                const chunkText = chunk.text || '';
                 if (chunkText) {
                     fullText += chunkText;
                     res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText })}\n\n`);
@@ -779,9 +782,11 @@ app.get('/api/test-ai', async (req, res) => {
         const ai = getAI();
         if (!ai) return res.status(500).json({ error: 'AI not configured' });
 
-        const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const result = await model.generateContent('Say "AI is working"');
-        res.json({ result: result.response.text() });
+        const result = await ai.models.generateContent({
+            model: 'models/gemini-2.0-flash-lite',
+            contents: 'Say "AI is working"'
+        });
+        res.json({ result: result.text });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -801,10 +806,10 @@ app.post('/api/speech', async (req, res) => {
             return res.status(500).json({ error: 'AI service not configured' });
         }
 
-        const model = ai.getGenerativeModel({ model: 'models/gemini-3-flash-preview' });
-        const response = await model.generateContent({
+        const response = await ai.models.generateContent({
+            model: 'models/gemini-2.5-flash-preview-05-20',
             contents: [{ parts: [{ text: `Recommendation: ${text}` }] }],
-            generationConfig: {
+            config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
                     voiceConfig: {
@@ -814,7 +819,7 @@ app.post('/api/speech', async (req, res) => {
             }
         });
 
-        const base64Audio = response.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         res.json({ audio: base64Audio });
 
     } catch (error) {
