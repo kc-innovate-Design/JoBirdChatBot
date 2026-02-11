@@ -11,6 +11,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+// Sanitize all environment variables (important for production pastes with whitespace/tabs)
+Object.keys(process.env).forEach(key => {
+    const cleanKey = key.trim();
+    if (process.env[key]) {
+        const cleanValue = process.env[key].toString().trim();
+        if (cleanKey !== key || cleanValue !== process.env[key]) {
+            console.log(`[server] Sanitized env var: "${key}"`);
+            process.env[cleanKey] = cleanValue;
+        }
+    }
+});
+
 // Environment variables (server-side only - NEVER sent to browser)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -632,12 +644,15 @@ app.post('/api/chat/stream', async (req, res) => {
 
         console.log('[server] Starting stream for query:', query);
 
-        // Set up SSE
+        // Set up SSE with strict headers for streaming
         res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no'); // Disable buffering for Nginx/Proxies
-        res.flushHeaders(); // Ensure headers are sent immediately
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
+
+        // Send 2KB of padding to bypass proxy buffers (Nginx, Cloud Run, etc.)
+        res.write(`: ${' '.repeat(2048)}\n\n`);
 
         const ai = getAI();
         const supabase = getSupabase();
@@ -713,7 +728,16 @@ app.post('/api/chat/stream', async (req, res) => {
         const kbStats = await getKnowledgeBaseStats();
         const kbStatsContext = `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Sample products: ${kbStats.sampleProducts.join(', ')}\n`;
 
-        // Don't send datasheets yet - wait until we know which ones are cited
+        const promptContext = `
+${conversationContext}
+${kbStatsContext}
+
+UPLOADED CONTEXT (PRIORITIZE THIS FOR THE USER'S SPECIFIC ENQUIRY):
+${uploadedContext || 'No files uploaded.'}
+
+TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):
+${pdfContext || 'No specific PDF matches found.'}`;
+
         if (!ai) {
             console.error('[server] AI Instance is NULL');
             res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI service not configured on server' })}\n\n`);
@@ -855,8 +879,23 @@ app.get('/api/diag', (req, res) => {
         port: process.env.PORT,
         vars,
         ai_initialized: !!aiInstance,
-        supabase_initialized: !!supabaseInstance
+        supabase_initialized: !!supabaseInstance,
+        server_time: new Date().toISOString()
     });
+});
+
+// Simple test endpoint to verify AI without streaming
+app.get('/api/test-ai', async (req, res) => {
+    try {
+        const ai = getAI();
+        if (!ai) return res.status(500).json({ error: 'AI not configured' });
+
+        const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const result = await model.generateContent('Say "AI is working"');
+        res.json({ result: result.response.text() });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Text-to-speech endpoint
