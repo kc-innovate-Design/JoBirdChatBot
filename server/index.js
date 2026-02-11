@@ -119,21 +119,20 @@ async function embedQuery(text) {
 }
 
 // Search Supabase for PDF chunks
+// Search Supabase for PDF chunks
 async function searchPdfChunks(question, matchCount = 10) {
     const supabase = getSupabase();
     if (!supabase) return [];
 
     try {
         console.log(`[server] Hybrid Search for: "${question}"`);
-
-        // 1. Keyword search (very reliable for specific part numbers)
-        const partMatch = question.match(/[A-Z]{1,3}\d+/i);
         let results = [];
         const existingIds = new Set();
 
+        // 1. Keyword search (very reliable for specific part numbers)
+        const partMatch = question.match(/[A-Z]{1,3}\d+/i);
         if (partMatch) {
             const partNumber = partMatch[0];
-            console.log(`[server] Part number detected: ${partNumber}. Running priority keyword search.`);
             const { data: keywordData } = await supabase
                 .from('pdf_chunks')
                 .select('id, content, metadata')
@@ -142,34 +141,60 @@ async function searchPdfChunks(question, matchCount = 10) {
 
             if (keywordData) {
                 for (const chunk of keywordData) {
-                    // FILTER OUT TEST DATA
                     if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
-                    results.push({ ...chunk, similarity: 1.0 }); // High priority for exact keyword match
+                    results.push({ ...chunk, similarity: 2.0 });
                     existingIds.add(chunk.id);
                 }
             }
         }
 
-        // 2. Vector search (Semantic) - with explicit timeout
+        // 2. Priority Synonym/Fuzzy Match
+        const normalizedQuery = question.toLowerCase();
+        const synonymMap = {
+            'life jacket': 'lifejacket',
+            'life jackets': 'lifejacket',
+            'breathing apparatus': 'ba',
+            'fire extinguisher': 'fe',
+            'first aid': 'fa',
+            'emergency': 'sos'
+        };
+
+        let fuzzyTerms = [];
+        Object.entries(synonymMap).forEach(([phrase, synonym]) => {
+            if (normalizedQuery.includes(phrase)) fuzzyTerms.push(synonym);
+        });
+        if (normalizedQuery.includes(' ')) {
+            fuzzyTerms.push(normalizedQuery.replace(/\s+/g, ''));
+        }
+        const individualWords = normalizedQuery.split(' ').filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list|cabinets|will|hold/i));
+        fuzzyTerms = [...new Set([...fuzzyTerms, ...individualWords])];
+
+        if (fuzzyTerms.length > 0) {
+            const orQuery = fuzzyTerms.map(term => `content.ilike.%${term}%,metadata->>source.ilike.%${term}%`).join(',');
+            const { data: fuzzyData } = await supabase.from('pdf_chunks').select('id, content, metadata').or(orQuery).limit(matchCount);
+            if (fuzzyData) {
+                for (const chunk of fuzzyData) {
+                    if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
+                    if (!existingIds.has(chunk.id)) {
+                        results.push({ ...chunk, similarity: 1.5 });
+                        existingIds.add(chunk.id);
+                    }
+                }
+            }
+        }
+
+        // 3. Vector search (Semantic)
         try {
-            console.log(`[server] Getting embedding for query: "${question}"`);
             const embedding = await Promise.race([
                 embedQuery(question),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
             ]);
-
-            console.log(`[server] Vector Searching...`);
             const { data: vectorData } = await supabase.rpc('match_pdf_chunks', {
                 query_embedding: embedding,
                 match_count: matchCount
             });
-
             if (vectorData) {
                 for (const chunk of vectorData) {
-                    const source = (chunk.metadata?.source || '').toLowerCase();
-                    const contentSnippet = (chunk.content || '').toLowerCase();
-                    if (source.includes('test') || contentSnippet.includes('test data')) continue;
-
                     if (!existingIds.has(chunk.id)) {
                         results.push(chunk);
                         existingIds.add(chunk.id);
@@ -180,105 +205,35 @@ async function searchPdfChunks(question, matchCount = 10) {
             console.warn(`[server] Vector Search skipped/failed: ${vErr.message}`);
         }
 
-        // 3. Robust Fuzzy Keyword Match (Ensures specific categories like Lifejackets are caught)
-        const normalizedQuery = question.toLowerCase();
-
-        // Map common synonyms to ensure they match PDF identifiers
-        const synonymMap = {
-            'life jacket': 'lifejacket',
-            'life jackets': 'lifejacket',
-            'breathing apparatus': 'ba',
-            'fire extinguisher': 'fe',
-            'first aid': 'fa',
-            'emergency': 'sos',
-            'cabinet': 'datasheet',
-            'dimensions': 'spec'
-        };
-
-        let fuzzyTerms = [normalizedQuery];
-
-        // Add mapped synonyms if found in the query
-        Object.entries(synonymMap).forEach(([phrase, synonym]) => {
-            if (normalizedQuery.includes(phrase)) {
-                fuzzyTerms.push(synonym);
-            }
-        });
-
-        // Add "squashed" versions (removing spaces) to catch things like "lifejacket"
-        if (normalizedQuery.includes(' ')) {
-            fuzzyTerms.push(normalizedQuery.replace(/\s+/g, ''));
-        }
-
-        // Extract individual words that are significant
-        const individualWords = normalizedQuery.split(' ').filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list/i));
-        fuzzyTerms = [...new Set([...fuzzyTerms, ...individualWords])];
-
-        if (fuzzyTerms.length > 0) {
-            console.log(`[server] Running Robust Fuzzy Match for: ${fuzzyTerms.join(', ')}`);
-
-            // Build a single "OR" query for all fuzzy terms
-            const orQuery = fuzzyTerms.map(term => `content.ilike.%${term}%,metadata->>source.ilike.%${term}%`).join(',');
-
-            const { data: fuzzyData } = await supabase
-                .from('pdf_chunks')
-                .select('id, content, metadata')
-                .or(orQuery)
-                .limit(matchCount);
-
-            if (fuzzyData) {
-                for (const chunk of fuzzyData) {
-                    const source = (chunk.metadata?.source || '').toLowerCase();
-                    const contentSnippet = (chunk.content || '').toLowerCase();
-                    if (source.includes('test') || contentSnippet.includes('test data')) continue;
-
-                    if (!existingIds.has(chunk.id)) {
-                        results.push({ ...chunk, similarity: 0.6 }); // Significant boost for targeted keywords
-                        existingIds.add(chunk.id);
-                    }
-                }
-            }
-        }
-
-        // Sort by similarity and deduplicate by source to ensure variety
-        results.sort((a, b) => b.similarity - a.similarity);
-
+        results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
         const deduplicated = [];
         const sourceCounts = new Map();
-
         for (const res of results) {
             const source = res.metadata?.source;
             const count = sourceCounts.get(source) || 0;
-            if (count < 2) { // Allow max 2 chunks per source for variety
+            if (count < 2) {
                 deduplicated.push(res);
                 sourceCounts.set(source, count + 1);
             }
             if (deduplicated.length >= matchCount) break;
         }
 
-        // Get sibling chunks for complete context
         const topSources = [...new Set(deduplicated.slice(0, 8).map(r => r.metadata?.source).filter(Boolean))];
-
         if (topSources.length > 0) {
             const { data: siblingChunks, error: siblingError } = await supabase
                 .from('pdf_chunks')
                 .select('id, content, metadata')
                 .in('metadata->>source', topSources);
-
             if (!siblingError && siblingChunks) {
                 const finalExistingIds = new Set(deduplicated.map(r => r.id));
                 for (const chunk of siblingChunks) {
-                    // STRICT TEST DATA FILTER
-                    const source = (chunk.metadata?.source || '').toLowerCase();
-                    const contentSnippet = (chunk.content || '').toLowerCase();
-                    if (source.includes('test') || contentSnippet.includes('test data')) continue;
-
+                    if (chunk.metadata?.source?.toLowerCase().includes('test')) continue;
                     if (!finalExistingIds.has(chunk.id)) {
                         deduplicated.push({ ...chunk, similarity: 0.2 });
                     }
                 }
             }
         }
-
         return deduplicated;
     } catch (err) {
         console.error('Search failed:', err);
@@ -707,8 +662,8 @@ app.post('/api/chat/stream', async (req, res) => {
         const hasFiles = files && files.length > 0;
 
         if (hasFiles) {
-            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 1/3: Processing uploaded documents...*' })}\n\n`);
-            console.log('[server] Processing files for context...');
+            console.log('[server] Step 1/3: Processing uploaded documents...');
+            // For file uploads, extract key terms from the file content for searching
             // For file uploads, extract key terms from the file content for searching
             // Limit file content to avoid extremely long decomposition
             const fileContent = files.map(f => f.content).join('\n').substring(0, 2000);
@@ -730,9 +685,9 @@ app.post('/api/chat/stream', async (req, res) => {
             }
             searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 12);
         } else if (query.length > 200) {
-            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 1/3: Decomposing complex enquiry...*' })}\n\n`);
+            console.log('[server] Step 1/3: Decomposing complex enquiry...');
             const searchTargets = await decomposeEnquiry(query);
-            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 2/3: Searching knowledge base...*' })}\n\n`);
+            console.log('[server] Step 2/3: Searching knowledge base...');
             const searchPromises = searchTargets.map(target => searchPdfChunks(target, 6));
             const resultsArrays = await Promise.all(searchPromises);
 
@@ -747,7 +702,7 @@ app.post('/api/chat/stream', async (req, res) => {
             }
             searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
         } else {
-            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 1/2: Searching knowledge base...*' })}\n\n`);
+            console.log('[server] Step 1/2: Searching knowledge base...');
             searchResults = await searchPdfChunks(query, 10);
         }
 
@@ -774,13 +729,7 @@ ${uploadedContext || 'No files uploaded.'}
 TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):
 ${pdfContext || 'No specific PDF matches found.'}`;
 
-        if (!ai) {
-            console.error('[server] AI Instance is NULL');
-            res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI service not configured on server' })}\n\n`);
-            return res.end();
-        }
-
-        res.write(`data: ${JSON.stringify({ type: 'chunk', text: `\n\n*Step ${hasFiles ? '3/3' : '2/2'}: Consulting AI Advisor...*` })}\n\n`);
+        console.log('[server] Step 2/2: Consulting AI Advisor...');
         const chatModel = 'models/gemini-2.0-flash-lite';
         console.log(`[server] Calling generateContentStream with model: ${chatModel}`);
 
@@ -794,7 +743,6 @@ ${pdfContext || 'No specific PDF matches found.'}`;
                         role: 'user',
                         parts: [
                             { text: promptContext },
-                            ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
                             { text: `CURRENT QUERY: ${query}` }
                         ]
                     }],
