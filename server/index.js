@@ -390,18 +390,18 @@ function filterDatasheetsByCitations(responseText, allDatasheets) {
     }
 
     // Extract source citations like "Source: RS550 Datasheet 2022.pdf" or "Source: JB02HR Datasheet"
-    // Updated regex to capture until end of line or period followed by space/newline (to catch .pdf properly)
-    const sourcePattern = /Source:\s*([^\n]+?)(?:\.pdf)?(?:\s|$|\n)/gi;
+    const sourcePattern = /Source:\s*([^\n\)]+)(?:\.pdf)?/gi;
     const productCodePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Z]*)\*\*/g;
 
     const citedSources = new Set();
+    let match;
 
     // Extract from "Source:" citations
     while ((match = sourcePattern.exec(responseText)) !== null) {
         const source = match[1].trim().toLowerCase()
             .replace(/\.pdf$/i, '')
-            .replace(/[).,:\s]+$/, '') // Clean up trailing punctuation often found in AI responses
-            .replace(/^[(\s]+/, ''); // Clean up leading punctuation
+            .replace(/[).,:\s]+$/, '')
+            .replace(/^[(\s]+/, '');
         citedSources.add(source);
         console.log('[filter] Found source citation:', source);
     }
