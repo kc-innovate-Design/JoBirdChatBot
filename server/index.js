@@ -252,11 +252,12 @@ async function expandQuery(query, history) {
         return query;
     }
 
-    if (query.length > 30 || query.includes(' ')) {
-        // Broadened regex to capture "What cabinets", "Tell me about", etc.
-        if (!query.toLowerCase().match(/how many|what|list|show|tell me|find/)) {
-            return query;
-        }
+    if (query.length > 4 || query.includes(' ')) {
+        // Apply expansion to almost everything except very short codes or exact part numbers
+        // but keep the bypass for obvious part numbers/filenames
+        // NO STRICT REGEX MATCH REQUIRED - let Gemini decide if it needs expansion
+    } else {
+        return query;
     }
 
     const ai = getAI();
@@ -396,9 +397,11 @@ function filterDatasheetsByCitations(responseText, allDatasheets) {
     const citedSources = new Set();
 
     // Extract from "Source:" citations
-    let match;
     while ((match = sourcePattern.exec(responseText)) !== null) {
-        const source = match[1].trim().toLowerCase().replace(/\.pdf$/i, '');
+        const source = match[1].trim().toLowerCase()
+            .replace(/\.pdf$/i, '')
+            .replace(/[).,:\s]+$/, '') // Clean up trailing punctuation often found in AI responses
+            .replace(/^[(\s]+/, ''); // Clean up leading punctuation
         citedSources.add(source);
         console.log('[filter] Found source citation:', source);
     }
@@ -704,8 +707,9 @@ app.post('/api/chat/stream', async (req, res) => {
             }
             searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
         } else {
-            console.log('[server] Step 1/2: Searching knowledge base...');
-            searchResults = await searchPdfChunks(query, 15); // Increased to 15 for better broad coverage
+            console.log('[server] Step 1/2: Expanding and searching knowledge base...');
+            const expandedQuery = await expandQuery(query, history);
+            searchResults = await searchPdfChunks(expandedQuery, 15);
         }
 
         const pdfContext = searchResults
