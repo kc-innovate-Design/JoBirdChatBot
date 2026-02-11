@@ -83,6 +83,14 @@ Example response:
 
 DO NOT provide full specifications unless the user explicitly asks for more details. Keep initial responses brief so the chat stays clean.
 
+UPLOADED CUSTOMER REQUIREMENTS:
+If the user uploads a file (email, quote, spec sheet), treat it as a customer requirements document:
+1. Extract each distinct requirement (cabinet type, quantity, dimensions, IP rating, certifications, environment, etc.).
+2. For EACH requirement, recommend the BEST matching JoBird product from the TECHNICAL KNOWLEDGE BASE.
+3. Structure your response as a REQUIREMENTS MATRIX: list each requirement, then the recommended product and WHY it fits.
+4. If a requirement cannot be matched, say so clearly.
+5. End with a summary of the recommended solution set.
+
 FORMATTING RULES:
 1. Use **bold** for product names only.
 2. NO markdown symbols (###, *, -) for formatting.
@@ -595,7 +603,69 @@ app.post('/api/chat/stream', async (req, res) => {
 
         // Expand search for complex queries using decomposition
         let searchResults = [];
-        if (query.length > 200) {
+
+        // If files are uploaded, use their content to generate search queries
+        const hasUploadedFiles = uploadedContext && uploadedContext.length > 50;
+        if (hasUploadedFiles) {
+            console.log('[server] File upload detected, extracting requirements for search...');
+            res.write('data: ' + JSON.stringify({ type: 'status', message: 'Extracting requirements from document...' }) + '\n\n');
+
+            // Use the file content to generate targeted search queries
+            const ai = getAI();
+            let searchTerms = [query];
+            if (ai) {
+                try {
+                    const extractResult = await Promise.race([
+                        ai.models.generateContent({
+                            model: 'models/gemini-2.0-flash-lite',
+                            contents: [{
+                                role: 'user',
+                                parts: [{
+                                    text: `Extract the key product requirements from this customer document. For each requirement, output a short search phrase suitable for finding matching products in a marine/offshore GRP cabinet database.
+
+Examples of good search phrases:
+- "fire hose cabinet 2 x 30M IP56"
+- "life jacket storage 12 suits offshore"
+- "breathing apparatus cabinet BA sets"
+- "wash down hose cabinet marine"
+
+DOCUMENT:
+${uploadedContext.substring(0, 3000)}
+
+RESPONSE: (One search phrase per line, maximum 6 phrases)`
+                                }]
+                            }],
+                            config: { temperature: 0.1, maxOutputTokens: 200 }
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Requirement extraction timeout')), 12000))
+                    ]);
+                    const phrases = extractResult.text?.split('\n').map(p => p.trim().replace(/^[\d.\-*]+\s*/, '')).filter(p => p.length > 5) || [];
+                    if (phrases.length > 0) {
+                        searchTerms = phrases;
+                        console.log('[server] Extracted search terms from upload:', searchTerms);
+                    }
+                } catch (err) {
+                    console.warn('[server] Requirement extraction failed, falling back to query:', err.message);
+                }
+            }
+
+            res.write('data: ' + JSON.stringify({ type: 'status', message: `Searching for ${searchTerms.length} requirement(s)...` }) + '\n\n');
+
+            // Search for each extracted requirement
+            const searchPromises = searchTerms.map(term => searchPdfChunks(term, 5));
+            const resultsArrays = await Promise.all(searchPromises);
+
+            const seenIds = new Set();
+            for (const arr of resultsArrays) {
+                for (const res of arr) {
+                    if (!seenIds.has(res.id)) {
+                        searchResults.push(res);
+                        seenIds.add(res.id);
+                    }
+                }
+            }
+            searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 20);
+        } else if (query.length > 200) {
             const searchTargets = await decomposeEnquiry(query);
             const searchPromises = searchTargets.map(target => searchPdfChunks(target, 5));
             const resultsArrays = await Promise.all(searchPromises);
