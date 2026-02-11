@@ -257,36 +257,41 @@ async function expandQuery(query, history) {
     if (!ai) return query;
 
     try {
+        console.log(`[server] Expanding query: "${query}" using gemini-2.0-flash-lite...`);
         const conversationSummary = (history || []).slice(-3)
             .map(m => `${m.role.toUpperCase()}: ${m.content}`)
             .join('\n');
 
-        const result = await ai.models.generateContent({
-            model: 'models/gemini-2.0-flash-lite',
-            contents: [{
-                role: 'user',
-                parts: [{
-                    text: `Based on this conversation history, expand the user's short query into a descriptive search query for a technical manual database.
-                    
-                    HISTORY:
-                    ${conversationSummary}
-                    
-                    QUERY: "${query}"
-                    
-                    RESPONSE: (Just the expanded query, no decoration)`
-                }]
-            }],
-            config: {
-                temperature: 0.1,
-                maxOutputTokens: 50
-            }
-        });
+        // Added timeout to prevent hang
+        const result = await Promise.race([
+            ai.models.generateContent({
+                model: 'models/gemini-2.0-flash-lite',
+                contents: [{
+                    role: 'user',
+                    parts: [{
+                        text: `Based on this conversation history, expand the user's short query into a descriptive search query for a technical manual database.
+                        
+                        HISTORY:
+                        ${conversationSummary}
+                        
+                        QUERY: "${query}"
+                        
+                        RESPONSE: (Just the expanded query, no decoration)`
+                    }]
+                }],
+                config: {
+                    temperature: 0.1,
+                    maxOutputTokens: 50
+                }
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Expand Query Timeout')), 10000))
+        ]);
 
         const expanded = result.response.text().trim().replace(/^"|"$/g, '');
         console.log(`[server] Expanded "${query}" -> "${expanded}"`);
         return expanded;
     } catch (err) {
-        console.error('Query expansion failed:', err);
+        console.warn('[server] Query expansion skipped/failed:', err.message);
         return query;
     }
 }
@@ -299,34 +304,39 @@ async function decomposeEnquiry(query) {
     if (!ai) return [query];
 
     try {
-        const result = await ai.models.generateContent({
-            model: 'models/gemini-2.0-flash-lite',
-            contents: [{
-                role: 'user',
-                parts: [{
-                    text: `Analyze this complex customer enquiry and break it down into 2-4 distinct product categories or technical requirements.
-                    Each category should be a short descriptive search phrase (e.g. "Life Jacket Cabinets Offshore", "SCBA storage with IP56 rating").
-                    
-                    ENQUIRY:
-                    ${query}
-                    
-                    RESPONSE FORMAT:
-                    Phrase 1
-                    Phrase 2
-                    (Just the phrases, one per line)`
-                }]
-            }],
-            config: {
-                temperature: 0.1,
-                maxOutputTokens: 100
-            }
-        });
+        console.log(`[server] Decomposing complex enquiry...`);
+        // Added timeout to prevent hang
+        const result = await Promise.race([
+            ai.models.generateContent({
+                model: 'models/gemini-2.0-flash-lite',
+                contents: [{
+                    role: 'user',
+                    parts: [{
+                        text: `Analyze this complex customer enquiry and break it down into 2-4 distinct product categories or technical requirements.
+                        Each category should be a short descriptive search phrase (e.g. "Life Jacket Cabinets Offshore", "SCBA storage with IP56 rating").
+                        
+                        ENQUIRY:
+                        ${query}
+                        
+                        RESPONSE FORMAT:
+                        Phrase 1
+                        Phrase 2
+                        (Just the phrases, one per line)`
+                    }]
+                }],
+                config: {
+                    temperature: 0.1,
+                    maxOutputTokens: 100
+                }
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Decompose Enquiry Timeout')), 10000))
+        ]);
 
         const phrases = result.response.text().split('\n').map(p => p.trim()).filter(p => p.length > 5);
         console.log(`[server] Decomposed enquiry into:`, phrases);
         return phrases.length > 0 ? phrases : [query];
     } catch (err) {
-        console.error('Enquiry decomposition failed:', err);
+        console.warn('[server] Enquiry decomposition skipped/failed:', err.message);
         return [query];
     }
 }
@@ -626,6 +636,10 @@ app.post('/api/chat/stream', async (req, res) => {
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders(); // Ensure headers are sent immediately
+
+        // Send a heartbeat/status immediately to show activity
+        res.write(`data: ${JSON.stringify({ type: 'chunk', text: 'Analyzing requirements...' })}\n\n`);
 
         // Search for relevant context - optimize for file uploads
         let searchResults = [];
