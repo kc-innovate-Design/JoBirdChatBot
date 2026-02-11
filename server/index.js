@@ -103,11 +103,17 @@ async function embedQuery(text) {
     const ai = getAI();
     if (!ai) throw new Error('Gemini not configured');
 
-    const result = await ai.models.embedContent({
-        model: 'gemini-embedding-001',
-        content: text,
-        config: { outputDimensionality: 768 }
-    });
+    console.log(`[server] Getting embedding for text (length: ${text.length})...`);
+
+    // Added timeout for embedding
+    const result = await Promise.race([
+        ai.models.embedContent({
+            model: 'gemini-embedding-001',
+            content: text,
+            config: { outputDimensionality: 768 }
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
+    ]);
 
     return result.embedding.values;
 }
@@ -675,6 +681,7 @@ app.post('/api/chat/stream', async (req, res) => {
         const hasFiles = files && files.length > 0;
 
         if (hasFiles) {
+            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 1/3: Processing uploaded documents...*' })}\n\n`);
             console.log('[server] Processing files for context...');
             // For file uploads, extract key terms from the file content for searching
             // Limit file content to avoid extremely long decomposition
@@ -697,7 +704,9 @@ app.post('/api/chat/stream', async (req, res) => {
             }
             searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 12);
         } else if (query.length > 200) {
+            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 1/3: Decomposing complex enquiry...*' })}\n\n`);
             const searchTargets = await decomposeEnquiry(query);
+            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 2/3: Searching knowledge base...*' })}\n\n`);
             const searchPromises = searchTargets.map(target => searchPdfChunks(target, 6));
             const resultsArrays = await Promise.all(searchPromises);
 
@@ -712,6 +721,7 @@ app.post('/api/chat/stream', async (req, res) => {
             }
             searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
         } else {
+            res.write(`data: ${JSON.stringify({ type: 'chunk', text: '\n\n*Step 1/2: Searching knowledge base...*' })}\n\n`);
             searchResults = await searchPdfChunks(query, 10);
         }
 
@@ -744,6 +754,7 @@ ${pdfContext || 'No specific PDF matches found.'}`;
             return res.end();
         }
 
+        res.write(`data: ${JSON.stringify({ type: 'chunk', text: `\n\n*Step ${hasFiles ? '3/3' : '2/2'}: Consulting AI Advisor...*` })}\n\n`);
         console.log('[server] Calling generateContentStream with model: models/gemini-3-flash-preview');
 
         // Ensure we handle potential SDK errors during the initial call
