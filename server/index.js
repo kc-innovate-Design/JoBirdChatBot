@@ -87,16 +87,19 @@ FORMATTING RULES:
 1. Use **bold** for product names only.
 2. NO markdown symbols (###, *, -) for formatting.
 3. One product per short paragraph.
-4. Source citation at the end only if relevant (e.g., "Source: JB02HR Datasheet").
+4. Source citation at the end only if relevant (e.g., "Source: JB02HR Datasheet.pdf").
 
 FOLLOW-UP QUESTIONS:
-At the end, provide exactly 3 datasheet-related follow-up questions (comparisons, specs, features). NO questions about lead times, CAD, pricing, or availability.
+At the end, provide exactly 3 datasheet-related follow-up questions.
+If you listed multiple products, make the questions COMPARATIVE (e.g., "How do the storage capacities compare?", "Which is the most compact option?", "Do they share the same IP rating?").
+If you mentioned only one product, make them specific to that product.
 Format: [[FOLLOWUP]] Question 1 | Question 2 | Question 3
 
 RULES:
 1. NEVER hallucinate specs - use exact numbers from context.
 2. If info is missing, say: "I don't have that detail in the datasheets."
-3. Ignore any files with "test" in the name.`;
+3. You can answer general questions about the Knowledge Base (e.g., "What categories are available?") using the provided KNOWLEDGE BASE OVERVIEW.
+4. Ignore any files with "test" in the name.`;
 
 // Embed query using Gemini
 async function embedQuery(text) {
@@ -246,11 +249,12 @@ async function searchPdfChunks(question, matchCount = 10) {
 
 // Expand short queries into descriptive search terms
 async function expandQuery(query, history) {
-    // Skip expansion for alphanumeric part numbers anywhere in the query (unanchored regex)
-    // Also skip filenames with underscores/dashes to preserve exact identifiers
-    if (query.match(/[A-Z]{2,3}[\d.]+[A-Z]*/i) || query.includes('_') || query.includes('-')) {
+        const isMetaQuery = query.toLowerCase().includes('category') || query.toLowerCase().includes('list of') || query.toLowerCase().includes('what classes') || query.toLowerCase().includes('what sections');
+
+    if (query.match(/[A-Z]{2,3}[\d.]+[A-Z]*/i) || query.includes('_') || query.includes('-') || isMetaQuery) {
         return query;
     }
+
 
     if (query.length > 4 || query.includes(' ')) {
         // Apply expansion to almost everything except very short codes or exact part numbers
@@ -495,12 +499,21 @@ async function getKnowledgeBaseStats() {
 
         if (error) throw error;
 
-        const uniqueSources = new Set(sources?.map(s => s.source).filter(Boolean) || []);
-        const sampleProducts = Array.from(uniqueSources).slice(0, 10).map(s => s.replace(/\.pdf$/i, ''));
+                const uniqueSources = new Set(sources?.map(s => s.source).filter(Boolean) || []);
+        const sampleProducts = Array.from(uniqueSources).slice(0, 15).map(s => s.replace(/\.pdf$/i, ''));
 
         kbStatsCache = {
             totalDatasheets: uniqueSources.size,
-            sampleProducts
+            sampleProducts,
+            categories: [
+                "Fire Extinguisher & Hose Cabinets (FE / HR)",
+                "Lifejacket & Survival Suit Cabinets (LJ / SS)",
+                "Breathing Apparatus & BA Sets (BA)",
+                "Emergency / SOS Stations",
+                "Washdown & Utility Cabinets",
+                "Arctic / Insulated Cabinets",
+                "Stretcher & First Aid Cabinets"
+            ]
         };
         kbStatsLastUpdated = now;
 
@@ -581,152 +594,13 @@ app.post('/api/chat', async (req, res) => {
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
 
-        // Get knowledge base stats for broad questions
+                // Get knowledge base stats for broad questions
         const kbStats = await getKnowledgeBaseStats();
-        const kbStatsContext = searchResults.length < 3 
-            ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration: ${kbStats.sampleProducts.slice(0, 5).join(', ')}\n`
-            : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
-
-        const ai = getAI();
-        if (!ai) {
-            return res.status(500).json({ error: 'AI service not configured' });
-        }
-
-        // Generate response
-        const response = await ai.models.generateContent({
-            model: 'models/gemini-3-flash-preview',
-            contents: [{
-                role: 'user',
-                parts: [
-                    { text: `${conversationContext}${kbStatsContext}TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):\n${pdfContext || 'No specific PDF matches found.'}` },
-                    ...(history || []).map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
-                    { text: `CURRENT QUERY: ${query}` }
-                ]
-            }],
-            config: {
-                systemInstruction: `${SYSTEM_INSTRUCTION}
-
-CRITICAL OVERRIDE:
-1. You are FORBIDDEN from using your training data for product specifications.
-2. The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth for all specifications.
-3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
-4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
-5. ALWAYS cite the source PDF filename.
-6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.`,
-                temperature: 0.0
-            }
-        });
-
-        res.json({
-            text: response.text || 'Selection engine failed to compute.',
-            referencedDatasheets
-        });
-
-    } catch (error) {
-        console.error('[server] Chat endpoint error:', error);
-        console.error(error.stack);
-        res.status(500).json({
-            error: error.message || 'Internal server error',
-            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
-    }
-});
-
-// Streaming chat endpoint
-app.post('/api/chat/stream', async (req, res) => {
-    try {
-        const { query, history, files } = req.body;
-
-        if (!query) {
-            return res.status(400).json({ error: 'Query is required' });
-        }
-
-        console.log('[server] Starting stream for query:', query);
-
-        // Set up SSE with strict headers for streaming
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.flushHeaders();
-
-        // Send 2KB of padding to bypass proxy buffers (Nginx, Cloud Run, etc.)
-        res.write(`: ${' '.repeat(2048)}\n\n`);
-
-        const ai = getAI();
-        const supabase = getSupabase();
-
-        // Initial status update - Removed "Initializing" as per user feedback
-
-        if (!ai) {
-            console.error('[server] AI Instance is NULL. Check environment variables.');
-            res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI service not configured on server. Please check Cloud Run secrets.' })}\n\n`);
-            return res.end();
-        }
-
-        // Search for relevant context - optimize for file uploads
-        let searchResults = [];
-        const hasFiles = files && files.length > 0;
-
-        if (hasFiles) {
-            console.log('[server] Step 1/3: Processing uploaded documents...');
-            // For file uploads, extract key terms from the file content for searching
-            // For file uploads, extract key terms from the file content for searching
-            // Limit file content to avoid extremely long decomposition
-            const fileContent = files.map(f => f.content).join('\n').substring(0, 2000);
-            const searchTargets = await decomposeEnquiry(fileContent);
-
-            // Limit to 3 searches max for performance
-            const limitedTargets = searchTargets.slice(0, 3);
-            const searchPromises = limitedTargets.map(target => searchPdfChunks(target, 5));
-            const resultsArrays = await Promise.all(searchPromises);
-
-            const seenIds = new Set();
-            for (const arr of resultsArrays) {
-                for (const res of arr) {
-                    if (!seenIds.has(res.id)) {
-                        searchResults.push(res);
-                        seenIds.add(res.id);
-                    }
-                }
-            }
-            searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 12);
-        } else if (query.length > 200) {
-            console.log('[server] Step 1/3: Decomposing complex enquiry...');
-            const searchTargets = await decomposeEnquiry(query);
-            console.log('[server] Step 2/3: Searching knowledge base...');
-            const searchPromises = searchTargets.map(target => searchPdfChunks(target, 6));
-            const resultsArrays = await Promise.all(searchPromises);
-
-            const seenIds = new Set();
-            for (const arr of resultsArrays) {
-                for (const res of arr) {
-                    if (!seenIds.has(res.id)) {
-                        searchResults.push(res);
-                        seenIds.add(res.id);
-                    }
-                }
-            }
-            searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
-        } else {
-            console.log('[server] Step 1/2: Expanding and searching knowledge base...');
-            const expandedQuery = await expandQuery(query, history);
-            searchResults = await searchPdfChunks(expandedQuery, 15);
-        }
-
-        const pdfContext = searchResults
-            .map(r => `[Source: ${r.metadata?.source}] ${r.content}`)
-            .join('\n\n');
-
-        const uploadedContext = (files || []).map(f => `[UPLOADED DOCUMENT: ${f.name}]\n${f.content}`).join('\n\n');
-
-        const referencedDatasheets = extractDatasheetReferences(searchResults);
-        const conversationContext = buildConversationContext(history);
-
-        // Get knowledge base stats for broad questions
-        const kbStats = await getKnowledgeBaseStats();
-        const kbStatsContext = (searchResults.length < 3 && !query.toLowerCase().includes('how many') && !query.toLowerCase().includes('total'))
-            ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration: ${kbStats.sampleProducts.slice(0, 5).join(', ')}\n`
+        // Smarter Context: If it's a "how many" or "list categories" query, provide structural info
+        const isBroad = searchResults.length < 3 || query.toLowerCase().includes('how many') || query.toLowerCase().includes('list') || query.toLowerCase().includes('categories');
+        
+        const kbStatsContext = isBroad
+            ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Standard Product Categories:\n  * ${kbStats.categories.join('\n  * ')}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration (if needed): ${kbStats.sampleProducts.slice(0, 8).join(', ')}\n`
             : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
 
         const promptContext = `
