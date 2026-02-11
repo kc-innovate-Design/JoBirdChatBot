@@ -528,6 +528,10 @@ async function getKnowledgeBaseStats() {
 // API Routes
 
 // Password verification
+// Password verification
+app.get('/api/ping', (req, res) => res.send('pong-get'));
+app.post('/api/ping', (req, res) => res.send('pong-post'));
+
 app.post('/api/verify-password', (req, res) => {
     const { password } = req.body;
     res.json({ valid: password === APP_PASSWORD });
@@ -551,6 +555,7 @@ app.get('/api/config', (req, res) => {
 
 // Chat endpoint
 app.post('/api/chat/stream', async (req, res) => {
+    console.log('[server] Incoming POST /api/chat/stream');
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -601,7 +606,7 @@ app.post('/api/chat/stream', async (req, res) => {
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
 
-                // Get knowledge base stats for broad questions
+        // Get knowledge base stats for broad questions
         const kbStats = await getKnowledgeBaseStats();
         // Smarter Context: If it's a "how many" or "list categories" query, provide structural info
         const isBroad = searchResults.length < 3 || query.toLowerCase().includes('how many') || query.toLowerCase().includes('list') || query.toLowerCase().includes('categories');
@@ -622,14 +627,16 @@ ${pdfContext || 'No specific PDF matches found.'}`;
 
         console.log('[server] Step 2/2: Consulting AI Advisor...');
         const chatModel = 'models/gemini-2.0-flash-lite';
+        const ai = getAI();
+        const model = ai.getGenerativeModel({ model: chatModel });
+        
         console.log(`[server] Calling generateContentStream with model: ${chatModel}`);
 
         let response;
         try {
             // Attempt generation with a strict timeout
             response = await Promise.race([
-                ai.models.generateContentStream({
-                    model: chatModel,
+                model.generateContentStream({
                     contents: [
                         ...(history || []).map(m => ({
                             role: m.role === 'user' ? 'user' : 'model',
@@ -643,7 +650,7 @@ ${pdfContext || 'No specific PDF matches found.'}`;
                             ]
                         }
                     ],
-                    config: {
+                    generationConfig: {
                         systemInstruction: `${SYSTEM_INSTRUCTION}
     
     CRITICAL OVERRIDE:
@@ -672,15 +679,14 @@ ${pdfContext || 'No specific PDF matches found.'}`;
         let chunkCount = 0;
 
         try {
-            for await (const chunk of response) {
+            for await (const chunk of response.stream) {
                 chunkCount++;
-                const chunkText = chunk.text || '';
+                const chunkText = chunk.text();
                 if (chunkText) {
                     fullText += chunkText;
                     res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText })}\n\n`);
                 }
 
-                // Keep-alive/Flush indicator for long responses
                 if (chunkCount % 5 === 0) {
                     console.log(`[server] Sent ${chunkCount} chunks so far...`);
                 }
@@ -800,10 +806,10 @@ app.post('/api/speech', async (req, res) => {
             return res.status(500).json({ error: 'AI service not configured' });
         }
 
-        const response = await ai.models.generateContent({
-            model: 'models/gemini-3-flash-preview',
+        const model = ai.getGenerativeModel({ model: 'models/gemini-3-flash-preview' });
+        const response = await model.generateContent({
             contents: [{ parts: [{ text: `Recommendation: ${text}` }] }],
-            config: {
+            generationConfig: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
                     voiceConfig: {
@@ -813,7 +819,7 @@ app.post('/api/speech', async (req, res) => {
             }
         });
 
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        const base64Audio = response.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         res.json({ audio: base64Audio });
 
     } catch (error) {
