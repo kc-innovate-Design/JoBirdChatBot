@@ -7,15 +7,13 @@ const Header: React.FC = () => {
       {/* Red Banner Header with Bird Logo Only */}
       <header className="bg-jobird-red text-white h-[60px] flex items-center px-6 lg:px-12 relative shadow-md">
         <div className="flex items-center h-full">
-          {/* Bird Logo Icon - background overlay to match header red exactly */}
-          <div className="relative h-10 w-auto" style={{ backgroundColor: '#D94637' }}>
-            <img
-              src="/logo.png"
-              alt="JoBird Logo"
-              className="h-10 w-auto object-contain"
-              style={{ mixBlendMode: 'multiply' }}
-            />
-          </div>
+          {/* Bird Logo Icon - lighten blend keeps white bird, merges the two reds */}
+          <img
+            src="/logo.png"
+            alt="JoBird Logo"
+            className="h-10 w-auto object-contain"
+            style={{ mixBlendMode: 'lighten' }}
+          />
         </div>
       </header>
 
