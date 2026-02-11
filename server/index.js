@@ -152,7 +152,7 @@ async function searchPdfChunks(question, matchCount = 10) {
 
         // 2. Vector search (Semantic) - with explicit timeout
         try {
-            console.log(`[server] Embedding query...`);
+            console.log(`[server] Getting embedding for query: "${question}"`);
             const embedding = await Promise.race([
                 embedQuery(question),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
@@ -166,13 +166,10 @@ async function searchPdfChunks(question, matchCount = 10) {
 
             if (vectorData) {
                 for (const chunk of vectorData) {
-                    // STRICT TEST DATA FILTER
                     const source = (chunk.metadata?.source || '').toLowerCase();
                     const contentSnippet = (chunk.content || '').toLowerCase();
-                    if (source.includes('test') || contentSnippet.includes('test data')) {
-                        console.log(`[server] Filtering out test chunk: ${source}`);
-                        continue;
-                    }
+                    if (source.includes('test') || contentSnippet.includes('test data')) continue;
+
                     if (!existingIds.has(chunk.id)) {
                         results.push(chunk);
                         existingIds.add(chunk.id);
@@ -183,26 +180,34 @@ async function searchPdfChunks(question, matchCount = 10) {
             console.warn(`[server] Vector Search skipped/failed: ${vErr.message}`);
         }
 
-        // 3. Broad Keyword Fallback (if still sparse)
-        if (results.length < 4) {
-            const keywords = question.split(' ').filter(w => w.length > 2 && !w.match(/tell|about|show|what/i));
-            if (keywords.length > 0) {
-                const { data: fallbackData } = await supabase
-                    .from('pdf_chunks')
-                    .select('id, content, metadata')
-                    .or(keywords.map(kw => `content.ilike.%${kw}%,metadata->>source.ilike.%${kw}%`).join(','))
-                    .limit(5);
+        // 3. Keyword Search (Always run for better coverage of broad categories)
+        // Normalize common terms like "life jacket" to also match "lifejacket"
+        let searchTerms = [question];
+        if (question.toLowerCase().includes('life jacket')) {
+            searchTerms.push(question.toLowerCase().replace('life jacket', 'lifejacket'));
+        } else if (question.toLowerCase().includes('lifejacket')) {
+            searchTerms.push(question.toLowerCase().replace('lifejacket', 'life jacket'));
+        }
 
-                if (fallbackData) {
-                    for (const chunk of fallbackData) {
-                        // STRICT TEST DATA FILTER
-                        const source = (chunk.metadata?.source || '').toLowerCase();
-                        const contentSnippet = (chunk.content || '').toLowerCase();
-                        if (source.includes('test') || contentSnippet.includes('test data')) continue;
+        const keywords = searchTerms.join(' ').split(' ').filter(w => w.length > 2 && !w.match(/tell|about|show|what|are|the|have|for|with/i));
 
-                        if (!existingIds.has(chunk.id)) {
-                            results.push({ ...chunk, similarity: 0.3 });
-                        }
+        if (keywords.length > 0) {
+            console.log(`[server] Running Keyword search for: ${keywords.join(', ')}`);
+            const { data: keywordFallbackData } = await supabase
+                .from('pdf_chunks')
+                .select('id, content, metadata')
+                .or(keywords.map(kw => `content.ilike.%${kw}%,metadata->>source.ilike.%${kw}%`).join(','))
+                .limit(matchCount);
+
+            if (keywordFallbackData) {
+                for (const chunk of keywordFallbackData) {
+                    const source = (chunk.metadata?.source || '').toLowerCase();
+                    const contentSnippet = (chunk.content || '').toLowerCase();
+                    if (source.includes('test') || contentSnippet.includes('test data')) continue;
+
+                    if (!existingIds.has(chunk.id)) {
+                        results.push({ ...chunk, similarity: 0.5 }); // Higher priority than random vector matches
+                        existingIds.add(chunk.id);
                     }
                 }
             }
@@ -264,9 +269,8 @@ async function expandQuery(query, history) {
     }
 
     if (query.length > 30 || query.includes(' ')) {
-        // If it's already a sentence or specific question, no need to expand much
-        // but still worth checking if it's just a "how many" type
-        if (!query.toLowerCase().match(/how many|what are|list|show/)) {
+        // Broadened regex to capture "What cabinets", "Tell me about", etc.
+        if (!query.toLowerCase().match(/how many|what|list|show|tell me|find/)) {
             return query;
         }
     }
