@@ -477,6 +477,22 @@ function buildConversationContext(history) {
     return context + '\n---\n';
 }
 
+// Extract product codes mentioned in conversation history
+function extractProductCodesFromHistory(history) {
+    if (!history || history.length === 0) return [];
+    const codes = new Set();
+    const codeRegex = /\b([A-Z]{2,3}[\d.]+[A-Z]*(?:HR|HRS|SS|LJ|BA|FE|FA)?)\b/gi;
+    for (const msg of history) {
+        const matches = msg.content?.matchAll(codeRegex);
+        if (matches) {
+            for (const m of matches) {
+                codes.add(m[1].toUpperCase());
+            }
+        }
+    }
+    return Array.from(codes);
+}
+
 // Get knowledge base stats for context
 async function getKnowledgeBaseStats() {
     const supabase = getSupabase();
@@ -571,6 +587,12 @@ app.post('/api/chat/stream', async (req, res) => {
         res.write('data: ' + JSON.stringify({ type: 'status', message: 'Searching Knowledge Base...' }) + '\n\n');
         console.log('[server] Processing query:', query);
 
+        // Extract product codes from history for follow-up context retention
+        const historyProductCodes = extractProductCodesFromHistory(history);
+        if (historyProductCodes.length > 0) {
+            console.log('[server] Products from history:', historyProductCodes.join(', '));
+        }
+
         // Expand search for complex queries using decomposition
         let searchResults = [];
         if (query.length > 200) {
@@ -593,6 +615,44 @@ app.post('/api/chat/stream', async (req, res) => {
         } else {
             const expandedQuery = await expandQuery(query, history);
             searchResults = await searchPdfChunks(expandedQuery, 10);
+        }
+
+        // Supplement with history product codes that aren't already in results
+        if (historyProductCodes.length > 0) {
+            const existingIds = new Set(searchResults.map(r => r.id));
+            const existingSources = new Set(searchResults.map(r => r.metadata?.source?.toLowerCase()).filter(Boolean));
+
+            // Find codes not already covered by search results
+            const missingCodes = historyProductCodes.filter(code => {
+                const codeLower = code.toLowerCase();
+                return !Array.from(existingSources).some(src => src.includes(codeLower));
+            });
+
+            if (missingCodes.length > 0) {
+                console.log('[server] Supplementing search with history products:', missingCodes.join(', '));
+                const supabase = getSupabase();
+                if (supabase) {
+                    for (const code of missingCodes.slice(0, 3)) { // Limit to 3 extra products
+                        try {
+                            const { data: extraChunks } = await supabase
+                                .from('pdf_chunks')
+                                .select('id, content, metadata')
+                                .or(`content.ilike.%${code}%,metadata->>source.ilike.%${code}%`)
+                                .limit(3);
+                            if (extraChunks) {
+                                for (const chunk of extraChunks) {
+                                    if (!existingIds.has(chunk.id)) {
+                                        searchResults.push({ ...chunk, similarity: 1.8 });
+                                        existingIds.add(chunk.id);
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            console.warn(`[server] Failed to supplement ${code}:`, err.message);
+                        }
+                    }
+                }
+            }
         }
 
         console.log('[server] Search matched', searchResults.length, 'chunks.');
