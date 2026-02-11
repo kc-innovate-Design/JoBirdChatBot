@@ -85,11 +85,11 @@ DO NOT provide full specifications unless the user explicitly asks for more deta
 
 UPLOADED CUSTOMER REQUIREMENTS:
 If the user uploads a file (email, quote, spec sheet), treat it as a customer requirements document:
-1. Extract each distinct requirement (cabinet type, quantity, dimensions, IP rating, certifications, environment, etc.).
-2. For EACH requirement, recommend the BEST matching JoBird product from the TECHNICAL KNOWLEDGE BASE.
-3. Structure your response as a REQUIREMENTS MATRIX: list each requirement, then the recommended product and WHY it fits.
-4. If a requirement cannot be matched, say so clearly.
-5. End with a summary of the recommended solution set.
+1. Identify the DISTINCT PRODUCT CATEGORIES the customer needs (e.g., "Fire Hose Cabinet", "Electrical PPE Storage").
+2. For EACH category, recommend ONE best-fit JoBird product with a clear explanation of how it matches.
+3. Include key specs: dimensions, IP rating, material, and any relevant options.
+4. After listing recommendations, provide a brief NOTE on any requirements you cannot match.
+5. Keep it concise — the salesperson needs a quick-reference answer, not a feature-by-feature matrix.
 
 FORMATTING RULES:
 1. Use **bold** for product names only.
@@ -621,21 +621,30 @@ app.post('/api/chat/stream', async (req, res) => {
                             contents: [{
                                 role: 'user',
                                 parts: [{
-                                    text: `Extract the key product requirements from this customer document. For each requirement, output a short search phrase suitable for finding matching products in a marine/offshore GRP cabinet database.
+                                    text: `You are analyzing a customer requirements document for a marine/offshore GRP cabinet company called JoBird.
 
-Examples of good search phrases:
-- "fire hose cabinet 2 x 30M IP56"
-- "life jacket storage 12 suits offshore"
-- "breathing apparatus cabinet BA sets"
-- "wash down hose cabinet marine"
+Identify each DISTINCT PRODUCT the customer needs. Output ONE search phrase per product that describes WHAT the cabinet must store and its PRIMARY use case.
+
+RULES:
+- Focus on the PRODUCT TYPE, not individual features
+- Include storage contents and quantities when mentioned
+- DO NOT extract generic features like "IP56" or "stainless steel" as separate items
+- Maximum 4 search phrases
+
+Examples:
+- "fire hose cabinet 2 x 30M hoses with nozzles"
+- "lifejacket cabinet 12 automatic life jackets"
+- "breathing apparatus BA storage cabinet"
+- "electrical PPE storage cabinet boots gloves"
+- "wash down hose cabinet potable water"
 
 DOCUMENT:
 ${uploadedContext.substring(0, 3000)}
 
-RESPONSE: (One search phrase per line, maximum 6 phrases)`
+RESPONSE: (One search phrase per line, no numbering)`
                                 }]
                             }],
-                            config: { temperature: 0.1, maxOutputTokens: 200 }
+                            config: { temperature: 0.1, maxOutputTokens: 150 }
                         }),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('Requirement extraction timeout')), 12000))
                     ]);
