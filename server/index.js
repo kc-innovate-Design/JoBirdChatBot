@@ -758,24 +758,30 @@ RESPONSE: (One search phrase per line, no numbering)`
                 console.log('[server] Supplementing search with history products:', missingCodes.join(', '));
                 const supabase = getSupabase();
                 if (supabase) {
-                    for (const code of missingCodes.slice(0, 3)) { // Limit to 3 extra products
-                        try {
-                            const { data: extraChunks } = await supabase
-                                .from('pdf_chunks')
-                                .select('id, content, metadata')
-                                .or(`content.ilike.%${code}%,metadata->>source.ilike.%${code}%`)
-                                .limit(3);
-                            if (extraChunks) {
-                                for (const chunk of extraChunks) {
-                                    if (!existingIds.has(chunk.id)) {
-                                        searchResults.push({ ...chunk, similarity: 1.8 });
-                                        existingIds.add(chunk.id);
-                                    }
+                    try {
+                        // Run all supplement searches in parallel with a strict timeout
+                        const supplementResults = await Promise.race([
+                            Promise.all(missingCodes.slice(0, 3).map(code =>
+                                supabase.from('pdf_chunks')
+                                    .select('id, content, metadata')
+                                    .or(`content.ilike.%${code}%,metadata->>source.ilike.%${code}%`)
+                                    .limit(3)
+                                    .then(({ data }) => data || [])
+                                    .catch(() => [])
+                            )),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('History Supplement Timeout')), DB_TIMEOUT))
+                        ]);
+
+                        for (const chunks of supplementResults) {
+                            for (const chunk of chunks) {
+                                if (!existingIds.has(chunk.id)) {
+                                    searchResults.push({ ...chunk, similarity: 1.8 });
+                                    existingIds.add(chunk.id);
                                 }
                             }
-                        } catch (err) {
-                            console.warn(`[server] Failed to supplement ${code}:`, err.message);
                         }
+                    } catch (suppErr) {
+                        console.warn(`[server] History supplement skipped: ${suppErr.message}`);
                     }
                 }
             }
