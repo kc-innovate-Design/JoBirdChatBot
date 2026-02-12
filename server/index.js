@@ -609,6 +609,30 @@ app.post('/api/chat/stream', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
+    // === GLOBAL SAFETY NET ===
+    // Hard kill after 60 seconds — nothing can bypass this
+    const GLOBAL_TIMEOUT = 60000;
+    let requestDone = false;
+    const globalTimer = setTimeout(() => {
+        if (!requestDone) {
+            console.error('[server] GLOBAL TIMEOUT: Request exceeded 60s, force-ending.');
+            try {
+                res.write(`data: ${JSON.stringify({ type: 'error', error: 'Request timed out. Please try again.' })}\n\n`);
+                res.end();
+            } catch (e) { /* already closed */ }
+        }
+    }, GLOBAL_TIMEOUT);
+
+    // Keepalive heartbeat every 8s so client/browser doesn't assume we died
+    const heartbeat = setInterval(() => {
+        if (!requestDone) {
+            try { res.write(': keepalive\n\n'); } catch (e) { /* ignore */ }
+        }
+    }, 8000);
+
+    const cleanup = () => { requestDone = true; clearTimeout(globalTimer); clearInterval(heartbeat); };
+    res.on('close', cleanup);
+
     // Immediate heartbeat/progress to prevent browser timeout
     res.write('data: ' + JSON.stringify({ type: 'status', message: 'Analyzing query...' }) + '\n\n');
 
@@ -889,7 +913,10 @@ ${pdfContext || 'No specific PDF matches found.'}`;
         let chunkCount = 0;
 
         try {
+            // Per-chunk timeout: if no chunk arrives in 20s, break the loop
+            const CHUNK_TIMEOUT = 20000;
             for await (const chunk of response) {
+                if (requestDone) break; // Global timeout already fired
                 chunkCount++;
                 const chunkText = chunk.text || '';
                 if (chunkText) {
@@ -906,7 +933,9 @@ ${pdfContext || 'No specific PDF matches found.'}`;
             console.log(`[server] Stream complete. Total chunks: ${chunkCount}, Total chars: ${fullText.length}`);
         } catch (streamIterError) {
             console.error('[server] Error during stream iteration:', streamIterError);
-            res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText + '\n\n[ERROR DURING STREAMING]' })}\n\n`);
+            if (!requestDone) {
+                res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText + '\n\n[Response was cut short. Please try again.]' })}\n\n`);
+            }
         }
 
         // Extract citations from the response and filter datasheets
@@ -915,12 +944,16 @@ ${pdfContext || 'No specific PDF matches found.'}`;
 
         // Final safety strip for citations
         const finalOutput = stripCitations(fullText);
-        res.write(`data: ${JSON.stringify({ type: 'done', text: finalOutput, datasheets: citedDatasheets })}\n\n`);
-        res.end();
+        if (!requestDone) {
+            res.write(`data: ${JSON.stringify({ type: 'done', text: finalOutput, datasheets: citedDatasheets })}\n\n`);
+            res.end();
+        }
+        cleanup();
 
     } catch (error) {
         console.error('[server] Top-level Stream endpoint error:', error);
         console.error(error.stack);
+        cleanup();
         try {
             res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
             res.end();
