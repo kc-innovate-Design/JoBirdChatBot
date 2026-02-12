@@ -739,8 +739,18 @@ RESPONSE: (One search phrase per line, no numbering)`
             // Limit to top 15 for context window management
             searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
         } else {
-            const expandedQuery = await expandQuery(query, history);
-            searchResults = await searchPdfChunks(expandedQuery, 10);
+            // Detect meta/overview questions that don't need product search
+            const lowerQuery = query.toLowerCase();
+            const isMetaQuery = /how many|total|count|list.*categor|what.*categor|what.*types|overview|what do you (have|know)|what.*available/i.test(lowerQuery)
+                && !lowerQuery.match(/[A-Z]{2,3}[\d.]+/i); // But not if a specific product code is mentioned
+
+            if (isMetaQuery) {
+                console.log('[server] Meta/overview query detected — skipping product search.');
+                // No product search needed; KB stats context will provide the answer
+            } else {
+                const expandedQuery = await expandQuery(query, history);
+                searchResults = await searchPdfChunks(expandedQuery, 10);
+            }
         }
 
         // Supplement with history product codes that aren't already in results
