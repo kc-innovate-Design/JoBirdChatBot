@@ -597,7 +597,7 @@ app.get('/api/config', (req, res) => {
         VITE_FIREBASE_MESSAGING_SENDER_ID: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
         VITE_FIREBASE_APP_ID: process.env.VITE_FIREBASE_APP_ID,
         VITE_FIREBASE_MEASUREMENT_ID: process.env.VITE_FIREBASE_MEASUREMENT_ID,
-        VITE_GEMINI_LIVE_API_KEY: process.env.VITE_GEMINI_LIVE_API_KEY || process.env.GEMINI_API_KEY,
+        VITE_GEMINI_LIVE_API_KEY: process.env.VITE_GEMINI_LIVE_API_KEY || '', // Never fall back to unrestricted key
         VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || SUPABASE_URL
     });
 });
