@@ -37,6 +37,16 @@ let kbStatsCache = null;
 let kbStatsLastUpdated = 0;
 const KB_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
+// Helper to strip citations from text
+function stripCitations(text) {
+    if (!text) return text;
+    // Strip (Source: ... .pdf) and similar patterns
+    return text.replace(/\(Source:\s*[^)]+\.pdf\)/gi, '')
+        .replace(/Source:\s*[^)]+\.pdf/gi, '')
+        .replace(/\[Source:\s*[^\]]+\.pdf\]/gi, '')
+        .trim();
+}
+
 function getAI() {
     if (aiInstance) return aiInstance;
 
@@ -69,15 +79,15 @@ function getSupabase() {
 const SYSTEM_INSTRUCTION = `You are JoBird Cabinet Advisor, a concise and helpful assistant for JoBird salespeople and sales trainees.
 
 YOUR PURPOSE:
-Help sales staff quickly identify the correct GRP cabinet for their customer's requirements. Keep responses SHORT and scannable.
+Help sales staff quickly identify the correct GRP cabinet for their customer's requirements. Keep responses SHORT and helpful.
 
 RESPONSE FORMAT (CRITICAL):
 For each product recommendation, provide ONLY:
 1. **Product Name** (bold, e.g., **JB02HR**)
-2. A 2-sentence summary of why it fits the requirement
+2. A helpful summary (2-3 sentences) of why it fits the requirement. If recommending a general-purpose cabinet for a specific storage need, focus on how its size and protection (IP rating) meet the customer's needs.
 
 Example response:
-**JB02HR** — Fire hose cabinet for 2 x 30M hoses. Dimensions: 937 x 835 x 347mm, IP56 rated with Lloyds approval.
+**JB02HR** — Recommended for its versatility in storing 2 x 30M hoses or other safety equipment. It provides IP56 protection and is Lloyd's approved for marine environments.
 
 **JB17** — Large life jacket cabinet for up to 24 suits. Arctic-rated options with heaters and insulation available.
 
@@ -88,14 +98,14 @@ If the user uploads a file (email, quote, spec sheet), treat it as a customer re
 1. Identify the DISTINCT PRODUCT CATEGORIES the customer needs (e.g., "Fire Hose Cabinet", "Electrical PPE Storage").
 2. For EACH category, recommend ONE best-fit JoBird product with a clear explanation of how it matches.
 3. Include key specs: dimensions, IP rating, material, and any relevant options.
-4. If no exact-purpose product exists, recommend the CLOSEST general-purpose GRP cabinet that meets the size, environment and protection requirements. JoBird GRP cabinets are versatile and can be used for storage of equipment beyond their primary marketing category.
+4. If no exact-purpose product exists, recommend the CLOSEST general-purpose GRP cabinet that meets the size, environment and protection requirements. JoBird GRP cabinets are versatile and can be used for storage of equipment beyond their primary marketing category. Be positive about the "best fit" rather than lead with what isn't available.
 5. Keep it concise — the salesperson needs a quick-reference answer, not a feature-by-feature matrix.
 
 FORMATTING RULES:
 1. Use **bold** for product names only.
 2. NO markdown symbols (###, *, -) for formatting.
 3. One product per short paragraph.
-4. Source citation at the end only if relevant (e.g., "Source: JB02HR Datasheet.pdf").
+4. DO NOT include source citations, filenames, or parentheses containing "Source" (e.g., "(Source: ...)") in the chat response.
 
 FOLLOW-UP QUESTIONS:
 At the end, provide exactly 4 datasheet-related follow-up questions.
@@ -105,7 +115,7 @@ Format: [[FOLLOWUP]] Question 1 | Question 2 | Question 3 | Question 4
 
 RULES:
 1. NEVER hallucinate specs - use exact numbers from context.
-2. If info is missing, say: "I don't have that detail in the datasheets."
+2. If info is missing for a specific model, recommend a suitable alternative based on size and protection requirements if possible.
 3. You can answer general questions about the Knowledge Base (e.g., "What categories are available?") using the provided KNOWLEDGE BASE OVERVIEW.
 4. Ignore any files with "test" in the name.`;
 
@@ -165,11 +175,16 @@ async function searchPdfChunks(question, matchCount = 10) {
             'life jacket': 'lifejacket',
             'life jackets': 'lifejacket',
             'breathing apparatus': 'ba',
+            'scba': 'ba',
+            'self contained': 'ba',
+            'self-contained': 'ba',
             'fire extinguisher': 'fe',
             'first aid': 'fa',
             'emergency': 'sos',
             'hosepipe': 'hose',
-            'hosepipes': 'hose'
+            'hosepipes': 'hose',
+            'fire hose': 'hr',
+            'wash down': 'utility'
         };
 
         let fuzzyTerms = [];
@@ -275,7 +290,7 @@ async function expandQuery(query, history) {
     if (!ai) return query;
 
     try {
-        console.log(`[server] Expanding query: "${query}" using gemini-2.0-flash-lite...`);
+        console.log(`[server] Expanding query: "${query}" using gemini-3-flash-preview...`);
         const conversationSummary = (history || []).slice(-3)
             .map(m => `${m.role.toUpperCase()}: ${m.content}`)
             .join('\n');
@@ -283,7 +298,7 @@ async function expandQuery(query, history) {
         // Added timeout to prevent hang
         const result = await Promise.race([
             ai.models.generateContent({
-                model: 'models/gemini-2.0-flash-lite',
+                model: 'models/gemini-3-flash-preview',
                 contents: [{
                     role: 'user',
                     parts: [{
@@ -326,7 +341,7 @@ async function decomposeEnquiry(query) {
         // Added timeout to prevent hang
         const result = await Promise.race([
             ai.models.generateContent({
-                model: 'models/gemini-2.0-flash-lite',
+                model: 'models/gemini-3-flash-preview',
                 contents: [{
                     role: 'user',
                     parts: [{
@@ -478,7 +493,8 @@ function buildConversationContext(history) {
 
     for (const msg of recentHistory) {
         const role = msg.role === 'user' ? 'Customer' : 'Assistant';
-        const content = msg.content.length > 500 ? msg.content.substring(0, 500) + '...' : msg.content;
+        const strippedContent = stripCitations(msg.content);
+        const content = strippedContent.length > 500 ? strippedContent.substring(0, 500) + '...' : strippedContent;
         context += `${role}: ${content}\n`;
     }
 
@@ -617,7 +633,7 @@ app.post('/api/chat/stream', async (req, res) => {
                 try {
                     const extractResult = await Promise.race([
                         ai.models.generateContent({
-                            model: 'models/gemini-2.0-flash-lite',
+                            model: 'models/gemini-3-flash-preview',
                             contents: [{
                                 role: 'user',
                                 parts: [{
@@ -765,7 +781,7 @@ RESPONSE: (One search phrase per line, no numbering)`
         console.log('[server] Search matched', searchResults.length, 'chunks.');
 
         const pdfContext = searchResults
-            .map(r => `[Source: ${r.metadata?.source}] ${r.content}`)
+            .map(r => r.content)
             .join('\n\n');
 
         const referencedDatasheets = extractDatasheetReferences(searchResults);
@@ -791,7 +807,7 @@ TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):
 ${pdfContext || 'No specific PDF matches found.'}`;
 
         res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
-        const chatModel = 'models/gemini-2.0-flash-lite';
+        const chatModel = 'models/gemini-3-flash-preview';
         const ai = getAI();
 
         console.log(`[server] Calling generateContentStream with model: ${chatModel}`);
@@ -805,13 +821,13 @@ ${pdfContext || 'No specific PDF matches found.'}`;
                     contents: [
                         ...(history || []).map(m => ({
                             role: m.role === 'user' ? 'user' : 'model',
-                            parts: [{ text: m.content }]
+                            parts: [{ text: stripCitations(m.content) }]
                         })),
                         {
                             role: 'user',
                             parts: [
                                 { text: promptContext },
-                                { text: `CURRENT QUERY: ${query}` }
+                                { text: `CURRENT QUERY: ${query}\n\nSTRICT RULE: Do NOT include any parenthetical citations, source filenames, or "Source: ..." text in your response. The sidebar will handle citations.` }
                             ]
                         }
                     ],
@@ -823,11 +839,10 @@ ${pdfContext || 'No specific PDF matches found.'}`;
     2. The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth for all specifications.
     3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
     4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
-    5. ALWAYS cite the source PDF filename for EVERY product mention (e.g. "JB02HR (Source: JB02HR Datasheet.pdf)").
-    6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
-    7. PERSPECTIVE: Suggested follow-up questions must be TIGHTLY COUPLED to the user's CURRENT query and the newly provided information.
-    8. IRRELEVANCE BLOCK: Do NOT suggest a question about a specific product (e.g. "What is the IP rating of JB29?") if that product was not mentioned in your response or the user's query. Suggest category or general questions instead for broad enquiries.
-    9. Write follow-up questions as if the USER is asking them to YOU.`,
+    5. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
+    6. PERSPECTIVE: Suggested follow-up questions must be TIGHTLY COUPLED to the user's CURRENT query and the newly provided information.
+    7. IRRELEVANCE BLOCK: Do NOT suggest a question about a specific product (e.g. "What is the IP rating of JB29?") if that product was not mentioned in your response or the user's query. Suggest category or general questions instead for broad enquiries.
+    8. Write follow-up questions as if the USER is asking them to YOU.`,
                         temperature: 0.0
                     }
                 }),
@@ -849,7 +864,9 @@ ${pdfContext || 'No specific PDF matches found.'}`;
                 const chunkText = chunk.text || '';
                 if (chunkText) {
                     fullText += chunkText;
-                    res.write(`data: ${JSON.stringify({ type: 'chunk', text: fullText })}\n\n`);
+                    // Apply real-time stripping for the stream
+                    const displayOutput = stripCitations(fullText);
+                    res.write(`data: ${JSON.stringify({ type: 'chunk', text: displayOutput })}\n\n`);
                 }
 
                 if (chunkCount % 5 === 0) {
@@ -866,7 +883,9 @@ ${pdfContext || 'No specific PDF matches found.'}`;
         console.log('[server] Extracting citations for final event...');
         const citedDatasheets = filterDatasheetsByCitations(fullText, referencedDatasheets);
 
-        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText, datasheets: citedDatasheets })}\n\n`);
+        // Final safety strip for citations
+        const finalOutput = stripCitations(fullText);
+        res.write(`data: ${JSON.stringify({ type: 'done', text: finalOutput, datasheets: citedDatasheets })}\n\n`);
         res.end();
 
     } catch (error) {
@@ -950,7 +969,7 @@ app.get('/api/test-ai', async (req, res) => {
         if (!ai) return res.status(500).json({ error: 'AI not configured' });
 
         const result = await ai.models.generateContent({
-            model: 'models/gemini-2.0-flash-lite',
+            model: 'models/gemini-3-flash-preview',
             contents: 'Say "AI is working"'
         });
         res.json({ result: result.text });
@@ -974,7 +993,7 @@ app.post('/api/speech', async (req, res) => {
         }
 
         const response = await ai.models.generateContent({
-            model: 'models/gemini-2.5-flash-preview-05-20',
+            model: 'models/gemini-3-flash-preview',
             contents: [{ parts: [{ text: `Recommendation: ${text}` }] }],
             config: {
                 responseModalities: [Modality.AUDIO],
