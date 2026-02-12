@@ -36,7 +36,7 @@ let supabaseInstance = null;
 let kbStatsCache = null;
 let kbStatsLastUpdated = 0;
 const KB_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const DB_TIMEOUT = 8000; // 8 seconds safety bound for DB calls
+const DB_TIMEOUT = 4000; // 4 seconds safety bound for DB calls
 
 // Helper to strip citations from text
 function stripCitations(text) {
@@ -320,7 +320,7 @@ async function expandQuery(query, history) {
                     maxOutputTokens: 50
                 }
             }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Expand Query Timeout')), 10000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Expand Query Timeout')), 5000))
         ]);
 
         const expanded = result.response.text().trim().replace(/^"|"$/g, '');
@@ -646,7 +646,6 @@ app.post('/api/chat/stream', async (req, res) => {
             return res.status(400).json({ error: 'Query is required' });
         }
 
-        res.write('data: ' + JSON.stringify({ type: 'status', message: 'Searching Knowledge Base...' }) + '\n\n');
         console.log('[server] Processing query:', query);
 
         // Extract product codes from history for follow-up context retention
@@ -655,27 +654,47 @@ app.post('/api/chat/stream', async (req, res) => {
             console.log('[server] Products from history:', historyProductCodes.join(', '));
         }
 
-        // Expand search for complex queries using decomposition
+        // === FOLLOW-UP DETECTION ===
+        // If the query references previous context (pronouns, comparisons) AND we have history,
+        // skip the entire search pipeline — the conversation context has everything we need.
+        const lowerQuery = query.toLowerCase();
+        const hasHistory = history && history.length >= 2;
+        const isFollowUp = hasHistory && (
+            /\b(these|those|they|them|their|it|its|this|that|both|all|each|same|above|mentioned|compared?|versus|vs|which one|between them)\b/i.test(lowerQuery)
+            || /\b(do they|are they|can they|does it|is it|can it|how do|how does|what about|what are|what is the|tell me more)\b/i.test(lowerQuery)
+            || query.length < 60 // Short queries with history are almost always follow-ups
+        );
+
         let searchResults = [];
+        let isFollowUpPath = false;
 
-        // If files are uploaded, use their content to generate search queries
-        const hasUploadedFiles = uploadedContext && uploadedContext.length > 50;
-        if (hasUploadedFiles) {
-            console.log('[server] File upload detected, extracting requirements for search...');
-            res.write('data: ' + JSON.stringify({ type: 'status', message: 'Extracting requirements from document...' }) + '\n\n');
+        if (isFollowUp && !uploadedContext) {
+            // === FAST PATH: Skip search entirely ===
+            console.log('[server] FAST PATH: Follow-up question detected, skipping search pipeline.');
+            res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
+            isFollowUpPath = true;
+        } else {
+            // === STANDARD PATH: Full search pipeline ===
+            res.write('data: ' + JSON.stringify({ type: 'status', message: 'Searching Knowledge Base...' }) + '\n\n');
 
-            // Use the file content to generate targeted search queries
-            const ai = getAI();
-            let searchTerms = [query];
-            if (ai) {
-                try {
-                    const extractResult = await Promise.race([
-                        ai.models.generateContent({
-                            model: 'models/gemini-3-flash-preview',
-                            contents: [{
-                                role: 'user',
-                                parts: [{
-                                    text: `You are analyzing a customer requirements document for a marine/offshore GRP cabinet company called JoBird.
+            // If files are uploaded, use their content to generate search queries
+            const hasUploadedFiles = uploadedContext && uploadedContext.length > 50;
+            if (hasUploadedFiles) {
+                console.log('[server] File upload detected, extracting requirements for search...');
+                res.write('data: ' + JSON.stringify({ type: 'status', message: 'Extracting requirements from document...' }) + '\n\n');
+
+                // Use the file content to generate targeted search queries
+                const ai = getAI();
+                let searchTerms = [query];
+                if (ai) {
+                    try {
+                        const extractResult = await Promise.race([
+                            ai.models.generateContent({
+                                model: 'models/gemini-3-flash-preview',
+                                contents: [{
+                                    role: 'user',
+                                    parts: [{
+                                        text: `You are analyzing a customer requirements document for a marine/offshore GRP cabinet company called JoBird.
 
 Identify each DISTINCT PRODUCT the customer needs. Output ONE search phrase per product that describes WHAT the cabinet must store and its PRIMARY use case.
 
@@ -696,137 +715,134 @@ DOCUMENT:
 ${uploadedContext.substring(0, 3000)}
 
 RESPONSE: (One search phrase per line, no numbering)`
-                                }]
-                            }],
-                            config: { temperature: 0.1, maxOutputTokens: 150 }
-                        }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('Requirement extraction timeout')), 12000))
-                    ]);
-                    const phrases = extractResult.text?.split('\n').map(p => p.trim().replace(/^[\d.\-*]+\s*/, '')).filter(p => p.length > 5) || [];
-                    if (phrases.length > 0) {
-                        searchTerms = phrases;
-                        console.log('[server] Extracted search terms from upload:', searchTerms);
-                    }
-                } catch (err) {
-                    console.warn('[server] Requirement extraction failed, falling back to query:', err.message);
-                }
-            }
-
-            res.write('data: ' + JSON.stringify({ type: 'status', message: `Searching for ${searchTerms.length} requirement(s)...` }) + '\n\n');
-
-            // Search for each extracted requirement
-            const searchPromises = searchTerms.map(term => searchPdfChunks(term, 5));
-            const resultsArrays = await Promise.all(searchPromises);
-
-            const seenIds = new Set();
-            for (const arr of resultsArrays) {
-                for (const res of arr) {
-                    if (!seenIds.has(res.id)) {
-                        searchResults.push(res);
-                        seenIds.add(res.id);
+                                    }]
+                                }],
+                                config: { temperature: 0.1, maxOutputTokens: 150 }
+                            }),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Requirement extraction timeout')), 8000))
+                        ]);
+                        const phrases = extractResult.text?.split('\n').map(p => p.trim().replace(/^[\d.\-*]+\s*/, '')).filter(p => p.length > 5) || [];
+                        if (phrases.length > 0) {
+                            searchTerms = phrases;
+                            console.log('[server] Extracted search terms from upload:', searchTerms);
+                        }
+                    } catch (err) {
+                        console.warn('[server] Requirement extraction failed, falling back to query:', err.message);
                     }
                 }
-            }
 
-            // Fallback: if any search term found < 2 results, retry with broader terms
-            for (let i = 0; i < searchTerms.length; i++) {
-                if ((resultsArrays[i] || []).length < 2) {
-                    console.log(`[server] Low results for "${searchTerms[i]}", trying broader search...`);
-                    // Extract key nouns and try broader searches
-                    const broaderTerms = [
-                        'GRP storage cabinet weatherproof',
-                        'utility cabinet outdoor marine',
-                        'general purpose cabinet IP56'
-                    ];
-                    for (const broader of broaderTerms) {
-                        try {
-                            const fallbackResults = await searchPdfChunks(broader, 3);
-                            for (const res of fallbackResults) {
-                                if (!seenIds.has(res.id)) {
-                                    searchResults.push(res);
-                                    seenIds.add(res.id);
-                                }
-                            }
-                            if (fallbackResults.length >= 2) break; // got enough
-                        } catch (err) {
-                            console.warn('[server] Fallback search failed:', err.message);
+                res.write('data: ' + JSON.stringify({ type: 'status', message: `Searching for ${searchTerms.length} requirement(s)...` }) + '\n\n');
+
+                // Search for each extracted requirement
+                const searchPromises = searchTerms.map(term => searchPdfChunks(term, 5));
+                const resultsArrays = await Promise.all(searchPromises);
+
+                const seenIds = new Set();
+                for (const arr of resultsArrays) {
+                    for (const res of arr) {
+                        if (!seenIds.has(res.id)) {
+                            searchResults.push(res);
+                            seenIds.add(res.id);
                         }
                     }
                 }
-            }
 
-            searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 20);
-        } else if (query.length > 200) {
-            const searchTargets = await decomposeEnquiry(query);
-            const searchPromises = searchTargets.map(target => searchPdfChunks(target, 5));
-            const resultsArrays = await Promise.all(searchPromises);
-
-            // Merge results and deduplicate
-            const seenIds = new Set();
-            for (const arr of resultsArrays) {
-                for (const res of arr) {
-                    if (!seenIds.has(res.id)) {
-                        searchResults.push(res);
-                        seenIds.add(res.id);
+                // Fallback: if any search term found < 2 results, retry with broader terms
+                for (let i = 0; i < searchTerms.length; i++) {
+                    if ((resultsArrays[i] || []).length < 2) {
+                        console.log(`[server] Low results for "${searchTerms[i]}", trying broader search...`);
+                        const broaderTerms = [
+                            'GRP storage cabinet weatherproof',
+                            'utility cabinet outdoor marine',
+                            'general purpose cabinet IP56'
+                        ];
+                        for (const broader of broaderTerms) {
+                            try {
+                                const fallbackResults = await searchPdfChunks(broader, 3);
+                                for (const res of fallbackResults) {
+                                    if (!seenIds.has(res.id)) {
+                                        searchResults.push(res);
+                                        seenIds.add(res.id);
+                                    }
+                                }
+                                if (fallbackResults.length >= 2) break;
+                            } catch (err) {
+                                console.warn('[server] Fallback search failed:', err.message);
+                            }
+                        }
                     }
                 }
-            }
-            // Limit to top 15 for context window management
-            searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
-        } else {
-            // Detect meta/overview questions that don't need product search
-            const lowerQuery = query.toLowerCase();
-            const isMetaQuery = /how many|total|count|list.*categor|what.*categor|what.*types|overview|what do you (have|know)|what.*available/i.test(lowerQuery)
-                && !lowerQuery.match(/[A-Z]{2,3}[\d.]+/i); // But not if a specific product code is mentioned
 
-            if (isMetaQuery) {
-                console.log('[server] Meta/overview query detected — skipping product search.');
-                // No product search needed; KB stats context will provide the answer
+                searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 20);
+            } else if (query.length > 200) {
+                const searchTargets = await decomposeEnquiry(query);
+                const searchPromises = searchTargets.map(target => searchPdfChunks(target, 5));
+                const resultsArrays = await Promise.all(searchPromises);
+
+                const seenIds = new Set();
+                for (const arr of resultsArrays) {
+                    for (const res of arr) {
+                        if (!seenIds.has(res.id)) {
+                            searchResults.push(res);
+                            seenIds.add(res.id);
+                        }
+                    }
+                }
+                searchResults = searchResults.sort((a, b) => b.similarity - a.similarity).slice(0, 15);
             } else {
-                const expandedQuery = await expandQuery(query, history);
-                searchResults = await searchPdfChunks(expandedQuery, 10);
+                // Detect meta/overview questions that don't need product search
+                const isMetaQuery = /how many|total|count|list.*categor|what.*categor|what.*types|overview|what do you (have|know)|what.*available/i.test(lowerQuery)
+                    && !lowerQuery.match(/[A-Z]{2,3}[\d.]+/i);
+
+                if (isMetaQuery) {
+                    console.log('[server] Meta/overview query detected — skipping product search.');
+                } else {
+                    const expandedQuery = await expandQuery(query, history);
+                    searchResults = await searchPdfChunks(expandedQuery, 10);
+                }
             }
         }
 
-        // Supplement with history product codes that aren't already in results
-        if (historyProductCodes.length > 0) {
-            const existingIds = new Set(searchResults.map(r => r.id));
-            const existingSources = new Set(searchResults.map(r => r.metadata?.source?.toLowerCase()).filter(Boolean));
+        // Skip history supplement and KB stats for follow-up fast path
+        if (!isFollowUpPath) {
+            // Supplement with history product codes that aren't already in results
+            if (historyProductCodes.length > 0) {
+                const existingIds = new Set(searchResults.map(r => r.id));
+                const existingSources = new Set(searchResults.map(r => r.metadata?.source?.toLowerCase()).filter(Boolean));
 
-            // Find codes not already covered by search results
-            const missingCodes = historyProductCodes.filter(code => {
-                const codeLower = code.toLowerCase();
-                return !Array.from(existingSources).some(src => src.includes(codeLower));
-            });
+                const missingCodes = historyProductCodes.filter(code => {
+                    const codeLower = code.toLowerCase();
+                    return !Array.from(existingSources).some(src => src.includes(codeLower));
+                });
 
-            if (missingCodes.length > 0) {
-                console.log('[server] Supplementing search with history products:', missingCodes.join(', '));
-                const supabase = getSupabase();
-                if (supabase) {
-                    try {
-                        // Run all supplement searches in parallel with a strict timeout
-                        const supplementResults = await Promise.race([
-                            Promise.all(missingCodes.slice(0, 3).map(code =>
-                                supabase.from('pdf_chunks')
-                                    .select('id, content, metadata')
-                                    .or(`content.ilike.%${code}%,metadata->>source.ilike.%${code}%`)
-                                    .limit(3)
-                                    .then(({ data }) => data || [])
-                                    .catch(() => [])
-                            )),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error('History Supplement Timeout')), DB_TIMEOUT))
-                        ]);
+                if (missingCodes.length > 0) {
+                    console.log('[server] Supplementing search with history products:', missingCodes.join(', '));
+                    const supabase = getSupabase();
+                    if (supabase) {
+                        try {
+                            const supplementResults = await Promise.race([
+                                Promise.all(missingCodes.slice(0, 3).map(code =>
+                                    supabase.from('pdf_chunks')
+                                        .select('id, content, metadata')
+                                        .or(`content.ilike.%${code}%,metadata->>source.ilike.%${code}%`)
+                                        .limit(3)
+                                        .then(({ data }) => data || [])
+                                        .catch(() => [])
+                                )),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error('History Supplement Timeout')), DB_TIMEOUT))
+                            ]);
 
-                        for (const chunks of supplementResults) {
-                            for (const chunk of chunks) {
-                                if (!existingIds.has(chunk.id)) {
-                                    searchResults.push({ ...chunk, similarity: 1.8 });
-                                    existingIds.add(chunk.id);
+                            for (const chunks of supplementResults) {
+                                for (const chunk of chunks) {
+                                    if (!existingIds.has(chunk.id)) {
+                                        searchResults.push({ ...chunk, similarity: 1.8 });
+                                        existingIds.add(chunk.id);
+                                    }
                                 }
                             }
+                        } catch (suppErr) {
+                            console.warn(`[server] History supplement skipped: ${suppErr.message}`);
                         }
-                    } catch (suppErr) {
-                        console.warn(`[server] History supplement skipped: ${suppErr.message}`);
                     }
                 }
             }
@@ -841,14 +857,15 @@ RESPONSE: (One search phrase per line, no numbering)`
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
 
-        // Get knowledge base stats for broad questions
-        const kbStats = await getKnowledgeBaseStats();
-        // Smarter Context: If it's a "how many" or "list categories" query, provide structural info
-        const isBroad = searchResults.length < 3 || query.toLowerCase().includes('how many') || query.toLowerCase().includes('list') || query.toLowerCase().includes('categories');
-
-        const kbStatsContext = isBroad
-            ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Standard Product Categories:\n  * ${kbStats.categories.join('\n  * ')}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration (if needed): ${kbStats.sampleProducts.slice(0, 8).join(', ')}\n`
-            : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
+        // Get knowledge base stats (skip for follow-ups — not needed)
+        let kbStatsContext = '';
+        if (!isFollowUpPath) {
+            const kbStats = await getKnowledgeBaseStats();
+            const isBroad = searchResults.length < 3 || lowerQuery.includes('how many') || lowerQuery.includes('list') || lowerQuery.includes('categories');
+            kbStatsContext = isBroad
+                ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Standard Product Categories:\n  * ${kbStats.categories.join('\n  * ')}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration (if needed): ${kbStats.sampleProducts.slice(0, 8).join(', ')}\n`
+                : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
+        }
 
         const promptContext = `
 ${conversationContext}
