@@ -149,88 +149,76 @@ async function searchPdfChunks(question, matchCount = 10) {
         let results = [];
         const existingIds = new Set();
 
-        // 1. Keyword search (very reliable for specific part numbers)
-        // Updated regex to catch JoBird codes with dots and suffixes (e.g., JB10.600LJS)
+        // Run Keyword, Fuzzy, and Vector searches in parallel
+        const startTime = Date.now();
+        const searchPromises = [];
+
+        // 1. Keyword search (Part Numbers)
         const partMatch = question.match(/[A-Z]{2,3}[\d.]+[A-Z]*/i);
         if (partMatch) {
             const partNumber = partMatch[0];
-            const { data: keywordData } = await supabase
-                .from('pdf_chunks')
-                .select('id, content, metadata')
-                .or(`content.ilike.%${partNumber}%,metadata->>source.ilike.%${partNumber}%`)
-                .limit(matchCount);
-
-            if (keywordData) {
-                for (const chunk of keywordData) {
-                    if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
-                    results.push({ ...chunk, similarity: 2.0 });
-                    existingIds.add(chunk.id);
-                }
-            }
+            searchPromises.push(
+                supabase.from('pdf_chunks')
+                    .select('id, content, metadata')
+                    .or(`content.ilike.%${partNumber}%,metadata->>source.ilike.%${partNumber}%`)
+                    .limit(matchCount)
+                    .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 2.0, type: 'keyword' })))
+            );
         }
 
         // 2. Priority Synonym/Fuzzy Match
         const normalizedQuery = question.toLowerCase();
         const synonymMap = {
-            'life jacket': 'lifejacket',
-            'life jackets': 'lifejacket',
-            'breathing apparatus': 'ba',
-            'scba': 'ba',
-            'self contained': 'ba',
-            'self-contained': 'ba',
-            'fire extinguisher': 'fe',
-            'first aid': 'fa',
-            'emergency': 'sos',
-            'hosepipe': 'hose',
-            'hosepipes': 'hose',
-            'fire hose': 'hr',
-            'wash down': 'utility'
+            'life jacket': 'lifejacket', 'life jackets': 'lifejacket',
+            'breathing apparatus': 'ba', 'scba': 'ba', 'self contained': 'ba', 'self-contained': 'ba',
+            'fire extinguisher': 'fe', 'first aid': 'fa', 'emergency': 'sos',
+            'hosepipe': 'hose', 'hosepipes': 'hose', 'fire hose': 'hr', 'wash down': 'utility'
         };
 
         let fuzzyTerms = [];
         Object.entries(synonymMap).forEach(([phrase, synonym]) => {
             if (normalizedQuery.includes(phrase)) fuzzyTerms.push(synonym);
         });
-        if (normalizedQuery.includes(' ')) {
-            fuzzyTerms.push(normalizedQuery.replace(/\s+/g, ''));
-        }
+        if (normalizedQuery.includes(' ')) fuzzyTerms.push(normalizedQuery.replace(/\s+/g, ''));
         const individualWords = normalizedQuery.split(/[\s.\-_]+/).filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list|cabinets|will|hold/i));
         fuzzyTerms = [...new Set([...fuzzyTerms, ...individualWords])];
 
         if (fuzzyTerms.length > 0) {
             const orQuery = fuzzyTerms.map(term => `content.ilike.%${term}%,metadata->>source.ilike.%${term}%`).join(',');
-            const { data: fuzzyData } = await supabase.from('pdf_chunks').select('id, content, metadata').or(orQuery).limit(matchCount);
-            if (fuzzyData) {
-                for (const chunk of fuzzyData) {
-                    if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
-                    if (!existingIds.has(chunk.id)) {
-                        results.push({ ...chunk, similarity: 1.5 });
-                        existingIds.add(chunk.id);
-                    }
-                }
-            }
+            searchPromises.push(
+                supabase.from('pdf_chunks').select('id, content, metadata').or(orQuery).limit(matchCount)
+                    .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 1.5, type: 'fuzzy' })))
+            );
         }
 
         // 3. Vector search (Semantic)
-        try {
-            const embedding = await Promise.race([
-                embedQuery(question),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
-            ]);
-            const { data: vectorData } = await supabase.rpc('match_pdf_chunks', {
-                query_embedding: embedding,
-                match_count: matchCount
-            });
-            if (vectorData) {
-                for (const chunk of vectorData) {
-                    if (!existingIds.has(chunk.id)) {
-                        results.push(chunk);
-                        existingIds.add(chunk.id);
-                    }
+        searchPromises.push(
+            (async () => {
+                try {
+                    const embedding = await Promise.race([
+                        embedQuery(question),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
+                    ]);
+                    const { data } = await supabase.rpc('match_pdf_chunks', { query_embedding: embedding, match_count: matchCount });
+                    return (data || []).map(r => ({ ...r, type: 'vector' }));
+                } catch (vErr) {
+                    console.warn(`[server] Vector Search failed: ${vErr.message}`);
+                    return [];
+                }
+            })()
+        );
+
+        const allResults = await Promise.all(searchPromises);
+        console.log(`[server] Parallel search completed in ${Date.now() - startTime}ms`);
+
+        for (const batch of allResults) {
+            for (const chunk of batch) {
+                if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
+                if (!existingIds.has(chunk.id)) {
+                    results.push(chunk);
+                    existingIds.add(chunk.id);
                 }
             }
-        } catch (vErr) {
-            console.warn(`[server] Vector Search skipped/failed: ${vErr.message}`);
         }
 
         results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
@@ -846,7 +834,7 @@ ${pdfContext || 'No specific PDF matches found.'}`;
                         temperature: 0.0
                     }
                 }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('AI Generation Timeout')), 25000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('AI Generation Timeout (45s)')), 45000))
             ]);
             console.log('[server] generateContentStream call successful, starting to iterate chunks...');
         } catch (genError) {

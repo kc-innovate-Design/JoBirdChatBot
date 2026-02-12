@@ -64,19 +64,24 @@ export async function getSelectionResponseStream(
   const decoder = new TextDecoder();
   let referencedDatasheets: DatasheetReference[] = [];
   let fullText = '';
+  let lineBuffer = '';
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const text = decoder.decode(value, { stream: true });
-      const lines = text.split('\n');
+      const chunkText = decoder.decode(value, { stream: true });
+      lineBuffer += chunkText;
+
+      const lines = lineBuffer.split('\n');
+      // Keep the last partial line in the buffer
+      lineBuffer = lines.pop() || '';
 
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
+        if (line.trim().startsWith('data: ')) {
           try {
-            const data = JSON.parse(line.slice(6));
+            const data = JSON.parse(line.trim().slice(6));
 
             if (data.type === 'datasheets') {
               referencedDatasheets = data.datasheets || [];
@@ -86,13 +91,12 @@ export async function getSelectionResponseStream(
             } else if (data.type === 'done') {
               fullText = data.text || fullText;
               referencedDatasheets = data.datasheets || referencedDatasheets;
-              // Call onChunk one final time with the filtered datasheets
               onChunk(fullText, referencedDatasheets);
             } else if (data.type === 'error') {
               throw new Error(data.error);
             }
           } catch (parseError) {
-            // Skip invalid JSON lines
+            // Ignore incomplete JSON if split across lines
           }
         }
       }

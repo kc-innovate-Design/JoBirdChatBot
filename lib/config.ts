@@ -38,8 +38,9 @@ export async function loadConfig(): Promise<AppConfig> {
                 VITE_FIREBASE_MESSAGING_SENDER_ID: runtimeConfig.VITE_FIREBASE_MESSAGING_SENDER_ID || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
                 VITE_FIREBASE_APP_ID: runtimeConfig.VITE_FIREBASE_APP_ID || import.meta.env.VITE_FIREBASE_APP_ID || '',
                 VITE_FIREBASE_MEASUREMENT_ID: runtimeConfig.VITE_FIREBASE_MEASUREMENT_ID || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
-                // These stay empty in production for main chat (handled by server)
-                VITE_GEMINI_API_KEY: runtimeConfig.VITE_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '',
+                // Main Gemini API key is now SERVER-SIDE ONLY. 
+                // VITE_GEMINI_API_KEY is legacy and should remain empty in production.
+                VITE_GEMINI_API_KEY: '',
                 // Live Mode key - can be exposed client-side (should be a restricted key)
                 VITE_GEMINI_LIVE_API_KEY: runtimeConfig.VITE_GEMINI_LIVE_API_KEY || import.meta.env.VITE_GEMINI_LIVE_API_KEY || '',
                 VITE_SUPABASE_URL: runtimeConfig.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '',
@@ -64,8 +65,8 @@ export async function loadConfig(): Promise<AppConfig> {
             VITE_FIREBASE_MESSAGING_SENDER_ID: env.VITE_FIREBASE_MESSAGING_SENDER_ID || procEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
             VITE_FIREBASE_APP_ID: env.VITE_FIREBASE_APP_ID || procEnv.VITE_FIREBASE_APP_ID || '',
             VITE_FIREBASE_MEASUREMENT_ID: env.VITE_FIREBASE_MEASUREMENT_ID || procEnv.VITE_FIREBASE_MEASUREMENT_ID || '',
-            // For local development, these may be set via .env
-            VITE_GEMINI_API_KEY: env.VITE_GEMINI_API_KEY || procEnv.VITE_GEMINI_API_KEY || '',
+            // Main Gemini API key is now SERVER-SIDE ONLY
+            VITE_GEMINI_API_KEY: '',
             // Live Mode key
             VITE_GEMINI_LIVE_API_KEY: env.VITE_GEMINI_LIVE_API_KEY || procEnv.VITE_GEMINI_LIVE_API_KEY || '',
             VITE_SUPABASE_URL: env.VITE_SUPABASE_URL || procEnv.VITE_SUPABASE_URL || '',

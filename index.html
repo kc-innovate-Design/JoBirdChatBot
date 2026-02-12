@@ -1,68 +1,18 @@
-
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>JoBird - Cabinet Selection Assistant</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              jobird: {
-                red: '#D94637',
-                navy: '#23398f',
-                blue: '#23398f', // Alias for navy
-                yellow: '#fec311', // Safety Yellow
-                green: '#008a00',
-                lightGrey: '#f4f4f4',
-                darkNavy: '#0f172a',
-                slate: '#64748b',
-              }
-            },
-            fontFamily: {
-              sans: ['Inter', 'system-ui', 'sans-serif'],
-            }
-          }
-        }
-      }
-    </script>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap');
-      .custom-scrollbar::-webkit-scrollbar {
-        width: 4px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: #cbd5e1;
-        border-radius: 10px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-        background: #D94637;
-      }
-      body {
-        background-color: #f8fafc;
-      }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.39.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JoBird - Cabinet Selection Assistant</title>
+  <title>JoBird - Cabinet Selection Assistant</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="text-slate-900">
-    <div id="root"></div>
+
+<body class="text-slate-900">
+  <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
+
 </html>
