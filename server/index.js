@@ -36,6 +36,7 @@ let supabaseInstance = null;
 let kbStatsCache = null;
 let kbStatsLastUpdated = 0;
 const KB_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const DB_TIMEOUT = 8000; // 8 seconds safety bound for DB calls
 
 // Helper to strip citations from text
 function stripCitations(text) {
@@ -158,11 +159,14 @@ async function searchPdfChunks(question, matchCount = 10) {
         if (partMatch) {
             const partNumber = partMatch[0];
             searchPromises.push(
-                supabase.from('pdf_chunks')
-                    .select('id, content, metadata')
-                    .or(`content.ilike.%${partNumber}%,metadata->>source.ilike.%${partNumber}%`)
-                    .limit(matchCount)
-                    .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 2.0, type: 'keyword' })))
+                Promise.race([
+                    supabase.from('pdf_chunks')
+                        .select('id, content, metadata')
+                        .or(`content.ilike.%${partNumber}%,metadata->>source.ilike.%${partNumber}%`)
+                        .limit(matchCount)
+                        .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 2.0, type: 'keyword' }))),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Keyword Search Timeout')), DB_TIMEOUT))
+                ]).catch(err => { console.warn(`[server] Keyword search failed: ${err.message}`); return []; })
             );
         }
 
@@ -186,8 +190,11 @@ async function searchPdfChunks(question, matchCount = 10) {
         if (fuzzyTerms.length > 0) {
             const orQuery = fuzzyTerms.map(term => `content.ilike.%${term}%,metadata->>source.ilike.%${term}%`).join(',');
             searchPromises.push(
-                supabase.from('pdf_chunks').select('id, content, metadata').or(orQuery).limit(matchCount)
-                    .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 1.5, type: 'fuzzy' })))
+                Promise.race([
+                    supabase.from('pdf_chunks').select('id, content, metadata').or(orQuery).limit(matchCount)
+                        .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 1.5, type: 'fuzzy' }))),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Fuzzy Search Timeout')), DB_TIMEOUT))
+                ]).catch(err => { console.warn(`[server] Fuzzy search failed: ${err.message}`); return []; })
             );
         }
 
@@ -236,18 +243,26 @@ async function searchPdfChunks(question, matchCount = 10) {
 
         const topSources = [...new Set(deduplicated.slice(0, 8).map(r => r.metadata?.source).filter(Boolean))];
         if (topSources.length > 0) {
-            const { data: siblingChunks, error: siblingError } = await supabase
-                .from('pdf_chunks')
-                .select('id, content, metadata')
-                .in('metadata->>source', topSources);
-            if (!siblingError && siblingChunks) {
-                const finalExistingIds = new Set(deduplicated.map(r => r.id));
-                for (const chunk of siblingChunks) {
-                    if (chunk.metadata?.source?.toLowerCase().includes('test')) continue;
-                    if (!finalExistingIds.has(chunk.id)) {
-                        deduplicated.push({ ...chunk, similarity: 0.2 });
+            try {
+                const { data: siblingChunks, error: siblingError } = await Promise.race([
+                    supabase
+                        .from('pdf_chunks')
+                        .select('id, content, metadata')
+                        .in('metadata->>source', topSources),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Sibling Search Timeout')), DB_TIMEOUT))
+                ]);
+
+                if (!siblingError && siblingChunks) {
+                    const finalExistingIds = new Set(deduplicated.map(r => r.id));
+                    for (const chunk of siblingChunks) {
+                        if (chunk.metadata?.source?.toLowerCase().includes('test')) continue;
+                        if (!finalExistingIds.has(chunk.id)) {
+                            deduplicated.push({ ...chunk, similarity: 0.2 });
+                        }
                     }
                 }
+            } catch (sErr) {
+                console.warn(`[server] Sibling search skipped: ${sErr.message}`);
             }
         }
         return deduplicated;
