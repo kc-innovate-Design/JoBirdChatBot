@@ -420,9 +420,11 @@ function filterDatasheetsByCitations(responseText, allDatasheets) {
 
     // Extract source citations like "Source: RS550 Datasheet 2022.pdf" or "Source: JB02HR Datasheet"
     const sourcePattern = /Source:\s*([^\n\)]+)(?:\.pdf)?/gi;
-    const productCodePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Z]*)\*\*/g;
+    // Capture bold product names including suffixes like **JB02HR Wash down** or **JB02HR**
+    const productNamePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Z]*(?:\s+[A-Za-z]+)*?)\*\*/g;
 
     const citedSources = new Set();
+    const citedProductCodes = new Set();
     let match;
 
     // Extract from "Source:" citations
@@ -435,11 +437,16 @@ function filterDatasheetsByCitations(responseText, allDatasheets) {
         console.log('[filter] Found source citation:', source);
     }
 
-    // Extract from **ProductCode** bold mentions (e.g., **RS550**, **JB02HR**)
-    while ((match = productCodePattern.exec(responseText)) !== null) {
-        const productCode = match[1].toLowerCase();
-        citedSources.add(productCode);
-        console.log('[filter] Found product code:', productCode);
+    // Extract from **ProductName** bold mentions (e.g., **JB02HR**, **JB02HR Wash down**)
+    while ((match = productNamePattern.exec(responseText)) !== null) {
+        const fullName = match[1].trim().toLowerCase();
+        citedSources.add(fullName);
+        // Also extract the base product code for broader matching
+        const codeMatch = fullName.match(/^[a-z]{2,3}[\d.]+[a-z]*/i);
+        if (codeMatch) {
+            citedProductCodes.add(codeMatch[0].toLowerCase());
+        }
+        console.log('[filter] Found product name:', fullName);
     }
 
     console.log('[filter] All cited sources:', Array.from(citedSources));
@@ -465,21 +472,25 @@ function filterDatasheetsByCitations(responseText, allDatasheets) {
                 return true;
             }
         }
+        // Also check base product codes
+        if (productCode && citedProductCodes.has(productCode)) {
+            console.log('[filter] Match via base product code:', productCode);
+            return true;
+        }
         return false;
     });
 
-    // Deduplicate by product code (keep first occurrence)
+    // Deduplicate by full normalized filename (not just product code)
+    // This preserves variants like "JB02HR" vs "JB02HR Wash down"
     const seen = new Set();
     const deduplicated = filtered.filter(ds => {
-        const filename = ds.filename.toLowerCase().replace(/\.pdf$/i, '');
-        const match = filename.match(/^([a-z]{2,3}[\d.]+[a-z]*)/i);
-        const productCode = match ? match[1].toLowerCase() : filename;
+        const normalizedKey = ds.filename.toLowerCase().trim();
 
-        if (seen.has(productCode)) {
+        if (seen.has(normalizedKey)) {
             console.log('[filter] Removing duplicate:', ds.filename);
             return false;
         }
-        seen.add(productCode);
+        seen.add(normalizedKey);
         return true;
     });
 
