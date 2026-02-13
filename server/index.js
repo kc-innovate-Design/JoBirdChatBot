@@ -94,6 +94,9 @@ Example response:
 
 DO NOT provide full specifications unless the user explicitly asks for more details. Keep initial responses brief so the chat stays clean.
 
+CATEGORY QUERIES:
+When the user asks about a CATEGORY of products (e.g., "what cabinets for life jackets", "show me fire hose options", "do you have extinguisher cabinets"), list ALL matching products from the provided context, not just the top 2-3. Give each product a brief 1-sentence description. The salesperson needs to see the FULL RANGE of options available.
+
 UPLOADED CUSTOMER REQUIREMENTS:
 If the user uploads a file (email, quote, spec sheet), treat it as a customer requirements document:
 1. Identify the DISTINCT PRODUCT CATEGORIES the customer needs (e.g., "Fire Hose Cabinet", "Electrical PPE Storage").
@@ -130,39 +133,41 @@ async function embedQuery(text) {
     const result = await Promise.race([
         ai.models.embedContent({
             model: 'gemini-embedding-001',
-            content: text,
+            contents: [{ parts: [{ text }] }],
             config: { outputDimensionality: 768 }
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
     ]);
 
-    return result.embedding.values;
+    // SDK v1.40+ returns embeddings (plural) array
+    const values = result.embeddings?.[0]?.values || result.embedding?.values;
+    if (!values) throw new Error('No embedding values returned');
+    return values;
 }
 
-// Search Supabase for PDF chunks
-// Search Supabase for PDF chunks
-async function searchPdfChunks(question, matchCount = 10) {
+// Search Supabase products table (Hybrid: keyword + fuzzy + vector)
+async function searchProducts(question, matchCount = 10) {
     const supabase = getSupabase();
     if (!supabase) return [];
 
     try {
-        console.log(`[server] Hybrid Search for: "${question}"`);
+        console.log(`[server] Hybrid Product Search for: "${question}"`);
         let results = [];
         const existingIds = new Set();
 
-        // Run Keyword, Fuzzy, and Vector searches in parallel
         const startTime = Date.now();
         const searchPromises = [];
 
-        // 1. Keyword search (Part Numbers)
-        const partMatch = question.match(/[A-Z]{2,3}[\d.]+[A-Z]*/i);
-        if (partMatch) {
+        // 1. Keyword search (Product codes like JB64, RS140, SOS603T)
+        // Extract ALL product codes from the query (not just the first) for comparison queries
+        const allPartMatches = [...question.matchAll(/[A-Z]{2,3}[\d.]+[A-Z]*/gi)];
+        for (const partMatch of allPartMatches) {
             const partNumber = partMatch[0];
             searchPromises.push(
                 Promise.race([
-                    supabase.from('pdf_chunks')
-                        .select('id, content, metadata')
-                        .or(`content.ilike.%${partNumber}%,metadata->>source.ilike.%${partNumber}%`)
+                    supabase.from('products')
+                        .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                        .or(`product_code.ilike.%${partNumber}%,name.ilike.%${partNumber}%`)
                         .limit(matchCount)
                         .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 2.0, type: 'keyword' }))),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('Keyword Search Timeout')), DB_TIMEOUT))
@@ -170,35 +175,37 @@ async function searchPdfChunks(question, matchCount = 10) {
             );
         }
 
-        // 2. Priority Synonym/Fuzzy Match
+        // 2. Fuzzy / metadata search on name, category, description, specs
         const normalizedQuery = question.toLowerCase();
         const synonymMap = {
             'life jacket': 'lifejacket', 'life jackets': 'lifejacket',
             'breathing apparatus': 'ba', 'scba': 'ba', 'self contained': 'ba', 'self-contained': 'ba',
-            'fire extinguisher': 'fe', 'first aid': 'fa', 'emergency': 'sos',
-            'hosepipe': 'hose', 'hosepipes': 'hose', 'fire hose': 'hr', 'wash down': 'utility'
+            'fire extinguisher': 'extinguisher', 'first aid': 'first aid', 'emergency': 'sos',
+            'hosepipe': 'hose', 'hosepipes': 'hose', 'fire hose': 'hose', 'wash down': 'wash'
         };
 
         let fuzzyTerms = [];
         Object.entries(synonymMap).forEach(([phrase, synonym]) => {
             if (normalizedQuery.includes(phrase)) fuzzyTerms.push(synonym);
         });
-        if (normalizedQuery.includes(' ')) fuzzyTerms.push(normalizedQuery.replace(/\s+/g, ''));
         const individualWords = normalizedQuery.split(/[\s.\-_]+/).filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list|cabinets|will|hold/i));
         fuzzyTerms = [...new Set([...fuzzyTerms, ...individualWords])];
 
         if (fuzzyTerms.length > 0) {
-            const orQuery = fuzzyTerms.map(term => `content.ilike.%${term}%,metadata->>source.ilike.%${term}%`).join(',');
+            const orQuery = fuzzyTerms.map(term => `name.ilike.%${term}%,category.ilike.%${term}%,description.ilike.%${term}%`).join(',');
             searchPromises.push(
                 Promise.race([
-                    supabase.from('pdf_chunks').select('id, content, metadata').or(orQuery).limit(matchCount)
+                    supabase.from('products')
+                        .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                        .or(orQuery)
+                        .limit(matchCount)
                         .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 1.5, type: 'fuzzy' }))),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('Fuzzy Search Timeout')), DB_TIMEOUT))
                 ]).catch(err => { console.warn(`[server] Fuzzy search failed: ${err.message}`); return []; })
             );
         }
 
-        // 3. Vector search (Semantic)
+        // 3. Vector search (Semantic) via match_products RPC
         searchPromises.push(
             (async () => {
                 try {
@@ -206,7 +213,7 @@ async function searchPdfChunks(question, matchCount = 10) {
                         embedQuery(question),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
                     ]);
-                    const { data } = await supabase.rpc('match_pdf_chunks', { query_embedding: embedding, match_count: matchCount });
+                    const { data } = await supabase.rpc('match_products', { query_embedding: embedding, match_count: matchCount });
                     return (data || []).map(r => ({ ...r, type: 'vector' }));
                 } catch (vErr) {
                     console.warn(`[server] Vector Search failed: ${vErr.message}`);
@@ -216,58 +223,30 @@ async function searchPdfChunks(question, matchCount = 10) {
         );
 
         const allResults = await Promise.all(searchPromises);
-        console.log(`[server] Parallel search completed in ${Date.now() - startTime}ms`);
+        console.log(`[server] Parallel product search completed in ${Date.now() - startTime}ms`);
 
+        // Merge and deduplicate by product ID
         for (const batch of allResults) {
-            for (const chunk of batch) {
-                if (chunk.metadata?.source?.toLowerCase().includes('test') || chunk.content?.toLowerCase().includes('test data')) continue;
-                if (!existingIds.has(chunk.id)) {
-                    results.push(chunk);
-                    existingIds.add(chunk.id);
-                }
-            }
-        }
-
-        results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
-        const deduplicated = [];
-        const sourceCounts = new Map();
-        for (const res of results) {
-            const source = res.metadata?.source;
-            const count = sourceCounts.get(source) || 0;
-            if (count < 2) {
-                deduplicated.push(res);
-                sourceCounts.set(source, count + 1);
-            }
-            if (deduplicated.length >= matchCount) break;
-        }
-
-        const topSources = [...new Set(deduplicated.slice(0, 8).map(r => r.metadata?.source).filter(Boolean))];
-        if (topSources.length > 0) {
-            try {
-                const { data: siblingChunks, error: siblingError } = await Promise.race([
-                    supabase
-                        .from('pdf_chunks')
-                        .select('id, content, metadata')
-                        .in('metadata->>source', topSources),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Sibling Search Timeout')), DB_TIMEOUT))
-                ]);
-
-                if (!siblingError && siblingChunks) {
-                    const finalExistingIds = new Set(deduplicated.map(r => r.id));
-                    for (const chunk of siblingChunks) {
-                        if (chunk.metadata?.source?.toLowerCase().includes('test')) continue;
-                        if (!finalExistingIds.has(chunk.id)) {
-                            deduplicated.push({ ...chunk, similarity: 0.2 });
-                        }
+            for (const product of batch) {
+                if (!existingIds.has(product.id)) {
+                    results.push(product);
+                    existingIds.add(product.id);
+                } else {
+                    // Keep highest similarity score
+                    const existing = results.find(r => r.id === product.id);
+                    if (existing && product.similarity > existing.similarity) {
+                        existing.similarity = product.similarity;
+                        existing.type = product.type;
                     }
                 }
-            } catch (sErr) {
-                console.warn(`[server] Sibling search skipped: ${sErr.message}`);
             }
         }
-        return deduplicated;
+
+        // Sort by relevance and cap results
+        results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+        return results.slice(0, matchCount);
     } catch (err) {
-        console.error('Search failed:', err);
+        console.error('Product search failed:', err);
         return [];
     }
 }
@@ -377,125 +356,120 @@ async function decomposeEnquiry(query) {
     }
 }
 
-// Extract datasheet references from search results
+// Extract datasheet references from product search results
+// PDFs are stored in the original Supabase project's public storage bucket
+const PDF_STORAGE_BASE = 'https://atmvjoymebksyajxfhwo.supabase.co/storage/v1/object/public/datasheets';
+
 function extractDatasheetReferences(searchResults) {
-    const uniqueSources = new Map();
+    const uniqueProducts = new Map();
 
-    for (const result of searchResults) {
-        const filename = result.metadata?.source;
-        // FINAL SAFETY CHECK FOR TEST DATA
-        if (filename && filename.toLowerCase().includes('test')) continue;
+    console.log('[datasheets] Extracting from', searchResults.length, 'search results');
 
-        if (filename) {
-            // Normalize for deduplication (case-insensitive, trimmed)
-            const normalizedKey = filename.toLowerCase().trim();
+    for (const product of searchResults) {
+        const code = product.product_code;
+        if (!code) continue;
 
-            if (!uniqueSources.has(normalizedKey)) {
-                // Create clean display name from filename
-                // e.g., "JB38.700SS Safety Station Datasheet 2024.pdf" -> "JB38.700SS Safety Station Datasheet 2024"
-                const displayName = filename
-                    .replace(/\.pdf$/i, '')
-                    .replace(/_/g, ' ')
-                    .replace(/\s*\(\d+\)$/, '') // Remove copy numbers like (1)
-                    .trim();
-
-                uniqueSources.set(normalizedKey, {
-                    filename,
-                    displayName,
-                    url: `${SUPABASE_URL}/storage/v1/object/public/datasheets/${encodeURIComponent(filename)}`
-                });
-            }
+        const normalizedKey = code.toLowerCase().trim();
+        if (!uniqueProducts.has(normalizedKey)) {
+            const pdfFilename = product.pdf_storage_url || `${code}.pdf`;
+            const entry = {
+                filename: code,
+                displayName: `${code} — ${product.name || product.category || ''}`.trim(),
+                productCode: code,
+                url: `${PDF_STORAGE_BASE}/${encodeURIComponent(pdfFilename)}`
+            };
+            console.log('[datasheets] Adding:', code, '→', entry.url.substring(0, 80));
+            uniqueProducts.set(normalizedKey, entry);
         }
     }
 
-    return Array.from(uniqueSources.values());
+    console.log('[datasheets] Total unique datasheets:', uniqueProducts.size);
+    return Array.from(uniqueProducts.values());
 }
 
 // Filter datasheets to only include those actually cited in the AI response
-function filterDatasheetsByCitations(responseText, allDatasheets) {
+function filterDatasheetsByCitations(responseText, allDatasheets, searchResults) {
     if (!responseText || !allDatasheets || allDatasheets.length === 0) {
         console.log('[filter] No response or datasheets to filter');
         return [];
     }
 
-    // Extract source citations like "Source: RS550 Datasheet 2022.pdf" or "Source: JB02HR Datasheet"
-    const sourcePattern = /Source:\s*([^\n\)]+)(?:\.pdf)?/gi;
-    // Capture bold product names including suffixes like **JB02HR Wash down** or **JB02HR**
-    const productNamePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Z]*(?:\s+[A-Za-z]+)*?)\*\*/g;
+    // Extract product codes from bold mentions like **JB02HR** and Source: citations
+    const productNamePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Za-z\d]*(?:\s+[A-Za-z]+)*?)\*\*/gi;
+    const sourcePattern = /Source:\s*([^\n\)]+)/gi;
 
-    const citedSources = new Set();
     const citedProductCodes = new Set();
     let match;
 
-    // Extract from "Source:" citations
-    while ((match = sourcePattern.exec(responseText)) !== null) {
-        const source = match[1].trim().toLowerCase()
-            .replace(/\.pdf$/i, '')
-            .replace(/[).,:\s]+$/, '')
-            .replace(/^[(\s]+/, '');
-        citedSources.add(source);
-        console.log('[filter] Found source citation:', source);
-    }
-
-    // Extract from **ProductName** bold mentions (e.g., **JB02HR**, **JB02HR Wash down**)
+    // Extract from **ProductCode** bold mentions
     while ((match = productNamePattern.exec(responseText)) !== null) {
-        const fullName = match[1].trim().toLowerCase();
-        citedSources.add(fullName);
-        // Also extract the base product code for broader matching
-        const codeMatch = fullName.match(/^[a-z]{2,3}[\d.]+[a-z]*/i);
+        const codeMatch = match[1].trim().match(/^[A-Z]{2,3}[\d.]+[A-Za-z\d]*/i);
         if (codeMatch) {
             citedProductCodes.add(codeMatch[0].toLowerCase());
         }
-        console.log('[filter] Found product name:', fullName);
     }
 
-    console.log('[filter] All cited sources:', Array.from(citedSources));
-    console.log('[filter] Available datasheets:', allDatasheets.map(d => d.filename));
+    // Extract from Source: citations
+    while ((match = sourcePattern.exec(responseText)) !== null) {
+        const codeMatch = match[1].trim().match(/[A-Z]{2,3}[\d.]+[A-Za-z\d]*/i);
+        if (codeMatch) {
+            citedProductCodes.add(codeMatch[0].toLowerCase());
+        }
+    }
 
-    // Filter datasheets that match any cited source
-    const filtered = allDatasheets.filter(ds => {
-        const filename = ds.filename.toLowerCase().replace(/\.pdf$/i, '');
-
-        // Extract product code from filename (e.g., "jb02hr" from "JB02HR Datasheet 2023.pdf")
-        const dsProductCode = filename.match(/^([a-z]{2,3}[\d.]+[a-z]*)/i);
-        const productCode = dsProductCode ? dsProductCode[1].toLowerCase() : '';
-
-        for (const cited of citedSources) {
-            // Check if filename matches or contains cited source
-            if (filename.includes(cited) || cited.includes(filename)) {
-                console.log('[filter] Match via filename:', ds.filename);
-                return true;
+    // Direct product code scan: check if any search result product codes appear in the response
+    const lowerResponse = responseText.toLowerCase();
+    if (searchResults && searchResults.length > 0) {
+        for (const product of searchResults) {
+            if (product.product_code) {
+                const code = product.product_code.toLowerCase();
+                if (lowerResponse.includes(code)) {
+                    citedProductCodes.add(code);
+                    console.log('[filter] Direct code match in response:', product.product_code);
+                }
             }
-            // Check if product code matches
-            if (productCode && (cited.includes(productCode) || cited === productCode)) {
-                console.log('[filter] Match via product code:', productCode, 'in', cited);
-                return true;
+            // Also check if significant product name words appear in the response
+            // Use strict matching to avoid false positives from generic terms
+            if (product.product_code && product.name) {
+                const stopWords = [
+                    'cabinet', 'cabinets', 'storage', 'marine', 'fire', 'safety', 'with', 'from',
+                    'that', 'this', 'type', 'automatic', 'manual', 'designed', 'protection',
+                    'environment', 'environments', 'harsh', 'offshore', 'approved', 'composites',
+                    'resistant', 'gelcoat', 'gelcoats', 'lloyds', 'equipment', 'door', 'seal',
+                    'hose', 'reel', 'extinguisher', 'jacket', 'jackets', 'life', 'lifejacket',
+                    'general', 'purpose', 'weather', 'proof', 'rated', 'outdoor'
+                ];
+                const nameParts = product.name.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+                const significantWords = nameParts.filter(w => !stopWords.includes(w));
+                // Require at least 3 unique significant words and 70% match to reduce false positives
+                if (significantWords.length >= 3) {
+                    const matchCount = significantWords.filter(w => lowerResponse.includes(w)).length;
+                    if (matchCount >= 3 && matchCount >= significantWords.length * 0.7) {
+                        citedProductCodes.add(product.product_code.toLowerCase());
+                        console.log('[filter] Name match:', product.product_code, '— matched', matchCount, 'of', significantWords.length, 'name words');
+                    }
+                }
             }
         }
-        // Also check base product codes
-        if (productCode && citedProductCodes.has(productCode)) {
-            console.log('[filter] Match via base product code:', productCode);
-            return true;
+    }
+
+    console.log('[filter] Cited product codes:', Array.from(citedProductCodes));
+    console.log('[filter] Available datasheets:', allDatasheets.map(d => d.productCode || d.filename));
+
+    // Filter datasheets by product code match
+    const filtered = allDatasheets.filter(ds => {
+        const dsCode = (ds.productCode || ds.filename).toLowerCase();
+        for (const cited of citedProductCodes) {
+            if (dsCode.includes(cited) || cited.includes(dsCode)) {
+                console.log('[filter] Match:', dsCode, '↔', cited);
+                return true;
+            }
         }
         return false;
     });
 
-    // Deduplicate by full normalized filename (not just product code)
-    // This preserves variants like "JB02HR" vs "JB02HR Wash down"
-    const seen = new Set();
-    const deduplicated = filtered.filter(ds => {
-        const normalizedKey = ds.filename.toLowerCase().trim();
-
-        if (seen.has(normalizedKey)) {
-            console.log('[filter] Removing duplicate:', ds.filename);
-            return false;
-        }
-        seen.add(normalizedKey);
-        return true;
-    });
-
-    console.log('[filter] Final datasheets:', deduplicated.map(d => d.filename));
-    return deduplicated;
+    console.log('[filter] Final datasheets:', filtered.map(d => d.productCode || d.filename));
+    return filtered;
 }
 
 // Build conversation context
@@ -519,7 +493,7 @@ function buildConversationContext(history) {
 function extractProductCodesFromHistory(history) {
     if (!history || history.length === 0) return [];
     const codes = new Set();
-    const codeRegex = /\b([A-Z]{2,3}[\d.]+[A-Z]*(?:HR|HRS|SS|LJ|BA|FE|FA)?)\b/gi;
+    const codeRegex = /\b([A-Z]{2,3}[\d.]+[A-Z\d]*)\b/gi;
     for (const msg of history) {
         const matches = msg.content?.matchAll(codeRegex);
         if (matches) {
@@ -531,10 +505,10 @@ function extractProductCodesFromHistory(history) {
     return Array.from(codes);
 }
 
-// Get knowledge base stats for context
+// Get knowledge base stats from products table
 async function getKnowledgeBaseStats() {
     const supabase = getSupabase();
-    if (!supabase) return { totalDatasheets: 0, sampleProducts: [], categories: [] };
+    if (!supabase) return { totalProducts: 0, sampleProducts: [], categories: [] };
 
     const now = Date.now();
     if (kbStatsCache && (now - kbStatsLastUpdated) < KB_STATS_CACHE_TTL) {
@@ -542,35 +516,43 @@ async function getKnowledgeBaseStats() {
     }
 
     try {
-        console.log('[server] Updating Knowledge Base stats (with 5s timeout)...');
-        // Fetch only first 2000 chunks to estimate/sample unique sources safely
-        const { data: sources, error } = await Promise.race([
-            supabase.from('pdf_chunks').select('metadata->source').limit(2000),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('KB Stats Timeout')), 5000))
+        console.log('[server] Updating Knowledge Base stats from products table...');
+        const [countResult, categoriesResult, sampleResult] = await Promise.all([
+            Promise.race([
+                supabase.from('products').select('id', { count: 'exact', head: true }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Count Timeout')), 5000))
+            ]),
+            Promise.race([
+                supabase.from('products').select('category').order('category'),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Categories Timeout')), 5000))
+            ]),
+            Promise.race([
+                supabase.from('products').select('product_code, name').limit(20),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Sample Timeout')), 5000))
+            ])
         ]);
 
-        if (error) throw error;
-
-        const uniqueSources = new Set(sources?.map(s => s.source).filter(Boolean) || []);
+        const uniqueCategories = [...new Set((categoriesResult.data || []).map(r => r.category).filter(Boolean))];
+        const sampleProducts = (sampleResult.data || []).map(r => `${r.product_code} ${r.name}`);
 
         kbStatsCache = {
-            totalDatasheets: uniqueSources.size > 0 ? uniqueSources.size : 183, // Fallback to approx count if scan is limited
-            sampleProducts: Array.from(uniqueSources).slice(0, 15).map(s => s.replace(/\.pdf$/i, '')),
-            categories: [
-                "Fire Extinguisher & Hose Cabinets (FE / HR)",
-                "Lifejacket & Survival Suit Cabinets (LJ / SS)",
-                "Breathing Apparatus & BA Sets (BA)",
-                "Emergency / SOS Stations",
-                "Washdown & Utility Cabinets",
-                "Arctic / Insulated Cabinets",
-                "Stretcher & First Aid Cabinets"
+            totalProducts: countResult.count || 144,
+            sampleProducts: sampleProducts.slice(0, 15),
+            categories: uniqueCategories.length > 0 ? uniqueCategories : [
+                "Fire Extinguisher Cabinet",
+                "Fire Hose Cabinet",
+                "Fire Hose Reel Cabinet",
+                "Lifejacket Storage Cabinet",
+                "Breathing Apparatus Cabinet",
+                "Safety Equipment Storage",
+                "General Purpose Cabinet"
             ]
         };
         kbStatsLastUpdated = now;
         return kbStatsCache;
     } catch (err) {
-        console.warn('[server] KB Stats optimization used:', err.message);
-        return kbStatsCache || { totalDatasheets: 183, sampleProducts: [], categories: [] };
+        console.warn('[server] KB Stats error:', err.message);
+        return kbStatsCache || { totalProducts: 144, sampleProducts: [], categories: [] };
     }
 }
 
@@ -643,7 +625,10 @@ app.post('/api/chat/stream', async (req, res) => {
             .join('\n\n');
 
         if (!query) {
-            return res.status(400).json({ error: 'Query is required' });
+            // SSE headers already sent, so use SSE error event instead of res.status()
+            res.write(`data: ${JSON.stringify({ type: 'error', error: 'Query is required' })}\n\n`);
+            cleanup();
+            return res.end();
         }
 
         console.log('[server] Processing query:', query);
@@ -660,19 +645,64 @@ app.post('/api/chat/stream', async (req, res) => {
         const lowerQuery = query.toLowerCase();
         const hasHistory = history && history.length >= 2;
         const isFollowUp = hasHistory && (
-            /\b(these|those|they|them|their|it|its|this|that|both|all|each|same|above|mentioned|compared?|versus|vs|which one|between them)\b/i.test(lowerQuery)
-            || /\b(do they|are they|can they|does it|is it|can it|how do|how does|what about|what are|what is the|tell me more)\b/i.test(lowerQuery)
-            || query.length < 60 // Short queries with history are almost always follow-ups
+            // Only trigger fast-path for queries that clearly reference previous conversation
+            // AND don't involve technical spec lookups that need search
+            (
+                /\b(these|those|they|them|their|its|both|same|above|mentioned|compared?|versus|vs|which one|between them)\b/i.test(lowerQuery)
+                || /\b(do they|are they|can they|does it|is it|can it|how do|how does|what about|tell me more)\b/i.test(lowerQuery)
+            )
+            // Very short questions with history are likely follow-ups (e.g. "what colour?", "dimensions?")
+            || (query.length < 30 && !lowerQuery.match(/[A-Z]{2,3}[\d.]+/i) && !lowerQuery.match(/\b(cabinet|hose|fire|life|jacket|extinguisher|storage|breathing)\b/i))
         );
+
+        // Even if it's a follow-up, if the user is asking about specs/ratings/dimensions,
+        // we should re-fetch product data so Gemini has the Specifications block
+        const needsSpecData = /\b(ip\s*rat|dimen|material|weight|height|width|depth|certif|approval|rating|specs|specification|construction|colou?r|locking|insulation)/i.test(lowerQuery);
 
         let searchResults = [];
         let isFollowUpPath = false;
 
-        if (isFollowUp && !uploadedContext) {
+        console.log(`[server] Follow-up check: isFollowUp=${isFollowUp}, needsSpecData=${needsSpecData}, historyProducts=${historyProductCodes.length}, hasHistory=${hasHistory}`);
+
+        if (isFollowUp && !uploadedContext && !needsSpecData) {
             // === FAST PATH: Skip search entirely ===
-            console.log('[server] FAST PATH: Follow-up question detected, skipping search pipeline.');
+            console.log('[server] PATH: FAST (follow-up, no spec data needed)');
             res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
             isFollowUpPath = true;
+        } else if (isFollowUp && needsSpecData && historyProductCodes.length > 0) {
+            // === SPEC FOLLOW-UP PATH: Fetch specific products by code from history ===
+            console.log('[server] PATH: SPEC FOLLOW-UP — fetching history products:', historyProductCodes.join(', '));
+            res.write('data: ' + JSON.stringify({ type: 'status', message: 'Looking up specifications...' }) + '\n\n');
+
+            const supabase = getSupabase();
+            if (supabase) {
+                try {
+                    const codeResults = await Promise.race([
+                        Promise.all(historyProductCodes.slice(0, 10).map(code =>
+                            supabase.from('products')
+                                .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                                .ilike('product_code', code)
+                                .limit(1)
+                                .then(({ data }) => data || [])
+                                .catch(() => [])
+                        )),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Spec lookup timeout')), DB_TIMEOUT))
+                    ]);
+
+                    const seenIds = new Set();
+                    for (const products of codeResults) {
+                        for (const product of products) {
+                            if (!seenIds.has(product.id)) {
+                                searchResults.push({ ...product, similarity: 2.0 });
+                                seenIds.add(product.id);
+                            }
+                        }
+                    }
+                    console.log('[server] Spec follow-up fetched', searchResults.length, 'products.');
+                } catch (err) {
+                    console.warn('[server] Spec follow-up lookup failed:', err.message);
+                }
+            }
         } else {
             // === STANDARD PATH: Full search pipeline ===
             res.write('data: ' + JSON.stringify({ type: 'status', message: 'Searching Knowledge Base...' }) + '\n\n');
@@ -734,7 +764,7 @@ RESPONSE: (One search phrase per line, no numbering)`
                 res.write('data: ' + JSON.stringify({ type: 'status', message: `Searching for ${searchTerms.length} requirement(s)...` }) + '\n\n');
 
                 // Search for each extracted requirement
-                const searchPromises = searchTerms.map(term => searchPdfChunks(term, 5));
+                const searchPromises = searchTerms.map(term => searchProducts(term, 5));
                 const resultsArrays = await Promise.all(searchPromises);
 
                 const seenIds = new Set();
@@ -758,7 +788,7 @@ RESPONSE: (One search phrase per line, no numbering)`
                         ];
                         for (const broader of broaderTerms) {
                             try {
-                                const fallbackResults = await searchPdfChunks(broader, 3);
+                                const fallbackResults = await searchProducts(broader, 3);
                                 for (const res of fallbackResults) {
                                     if (!seenIds.has(res.id)) {
                                         searchResults.push(res);
@@ -776,7 +806,7 @@ RESPONSE: (One search phrase per line, no numbering)`
                 searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 20);
             } else if (query.length > 200) {
                 const searchTargets = await decomposeEnquiry(query);
-                const searchPromises = searchTargets.map(target => searchPdfChunks(target, 5));
+                const searchPromises = searchTargets.map(target => searchProducts(target, 5));
                 const resultsArrays = await Promise.all(searchPromises);
 
                 const seenIds = new Set();
@@ -798,7 +828,95 @@ RESPONSE: (One search phrase per line, no numbering)`
                     console.log('[server] Meta/overview query detected — skipping product search.');
                 } else {
                     const expandedQuery = await expandQuery(query, history);
-                    searchResults = await searchPdfChunks(expandedQuery, 10);
+                    searchResults = await searchProducts(expandedQuery, 10);
+                }
+            }
+
+            // === SPEC-VALUE SUPPLEMENT (runs for ALL query paths) ===
+            // This catches products that vector/keyword search misses for queries like 'IP56 rating'
+            const specValueMatch = lowerQuery.match(/\b(ip\s*\d{2}|ip\s*\d{1}x|stainless\s*steel|grp|composite|galvani[sz]ed|aluminium|mild\s*steel)\b/i);
+            if (specValueMatch) {
+                const specValue = specValueMatch[0].replace(/\s+/g, '');
+                console.log('[server] Running structured spec-filter for:', specValue);
+                const supabase = getSupabase();
+                if (supabase) {
+                    try {
+                        const seenIds = new Set(searchResults.map(r => r.id));
+                        const { data: allProducts } = await Promise.race([
+                            supabase.from('products')
+                                .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                                .limit(200),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Spec Filter Timeout')), DB_TIMEOUT))
+                        ]);
+
+                        let specAdded = 0;
+                        for (const product of (allProducts || [])) {
+                            if (!seenIds.has(product.id)) {
+                                const specStr = JSON.stringify(product.specifications || {}).toLowerCase();
+                                const descStr = (product.description || '').toLowerCase();
+                                if (specStr.includes(specValue.toLowerCase()) || descStr.includes(specValue.toLowerCase())) {
+                                    searchResults.push({ ...product, similarity: 1.9, type: 'spec-filter' });
+                                    seenIds.add(product.id);
+                                    specAdded++;
+                                }
+                            }
+                        }
+                        console.log('[server] Spec-filter added', specAdded, 'products for', specValue);
+                        // Re-sort and limit after adding spec-filter results
+                        searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 25);
+                    } catch (err) {
+                        console.warn('[server] Spec-filter supplement failed:', err.message);
+                    }
+                }
+            }
+
+            // === CATEGORY SUPPLEMENT (runs for ALL query paths) ===
+            // When a query mentions a product category, fetch ALL matching products
+            // so the AI can present the full range of options on the first response
+            const categoryPatterns = [
+                { pattern: /life\s*jacket|lifejacket/i, terms: ['lifejacket', 'life jacket'] },
+                { pattern: /fire\s*hose|firehose/i, terms: ['fire hose', 'hose reel'] },
+                { pattern: /fire\s*extinguisher/i, terms: ['extinguisher'] },
+                { pattern: /breathing\s*apparatus|\bba\b|scba/i, terms: ['breathing apparatus', 'BA'] },
+                { pattern: /lifebuoy|life\s*buoy|life\s*ring/i, terms: ['lifebuoy', 'life buoy'] },
+                { pattern: /immersion\s*suit/i, terms: ['immersion suit'] },
+                { pattern: /wash\s*down/i, terms: ['wash down', 'washdown'] },
+                { pattern: /first\s*aid/i, terms: ['first aid'] },
+                { pattern: /electrical|ppe/i, terms: ['electrical', 'PPE'] },
+            ];
+
+            const matchedCategory = categoryPatterns.find(c => c.pattern.test(lowerQuery));
+            if (matchedCategory) {
+                console.log('[server] Category supplement triggered for:', matchedCategory.terms.join('/'));
+                const supabase = getSupabase();
+                if (supabase) {
+                    try {
+                        const catSeenIds = new Set(searchResults.map(r => r.id));
+                        const orQuery = matchedCategory.terms
+                            .map(t => `name.ilike.%${t}%,description.ilike.%${t}%,applications.ilike.%${t}%`)
+                            .join(',');
+                        const { data: catProducts } = await Promise.race([
+                            supabase.from('products')
+                                .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                                .or(orQuery)
+                                .limit(50),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Category Search Timeout')), DB_TIMEOUT))
+                        ]);
+
+                        let catAdded = 0;
+                        for (const product of (catProducts || [])) {
+                            if (!catSeenIds.has(product.id)) {
+                                searchResults.push({ ...product, similarity: 1.85, type: 'category' });
+                                catSeenIds.add(product.id);
+                                catAdded++;
+                            }
+                        }
+                        console.log('[server] Category supplement added', catAdded, 'products for', matchedCategory.terms[0]);
+                        // Allow more results for category queries so AI can list all options
+                        searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 30);
+                    } catch (err) {
+                        console.warn('[server] Category supplement failed:', err.message);
+                    }
                 }
             }
         }
@@ -808,12 +926,9 @@ RESPONSE: (One search phrase per line, no numbering)`
             // Supplement with history product codes that aren't already in results
             if (historyProductCodes.length > 0) {
                 const existingIds = new Set(searchResults.map(r => r.id));
-                const existingSources = new Set(searchResults.map(r => r.metadata?.source?.toLowerCase()).filter(Boolean));
+                const existingCodes = new Set(searchResults.map(r => r.product_code?.toLowerCase()).filter(Boolean));
 
-                const missingCodes = historyProductCodes.filter(code => {
-                    const codeLower = code.toLowerCase();
-                    return !Array.from(existingSources).some(src => src.includes(codeLower));
-                });
+                const missingCodes = historyProductCodes.filter(code => !existingCodes.has(code.toLowerCase()));
 
                 if (missingCodes.length > 0) {
                     console.log('[server] Supplementing search with history products:', missingCodes.join(', '));
@@ -822,9 +937,9 @@ RESPONSE: (One search phrase per line, no numbering)`
                         try {
                             const supplementResults = await Promise.race([
                                 Promise.all(missingCodes.slice(0, 3).map(code =>
-                                    supabase.from('pdf_chunks')
-                                        .select('id, content, metadata')
-                                        .or(`content.ilike.%${code}%,metadata->>source.ilike.%${code}%`)
+                                    supabase.from('products')
+                                        .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                                        .or(`product_code.ilike.%${code}%,name.ilike.%${code}%`)
                                         .limit(3)
                                         .then(({ data }) => data || [])
                                         .catch(() => [])
@@ -832,11 +947,11 @@ RESPONSE: (One search phrase per line, no numbering)`
                                 new Promise((_, reject) => setTimeout(() => reject(new Error('History Supplement Timeout')), DB_TIMEOUT))
                             ]);
 
-                            for (const chunks of supplementResults) {
-                                for (const chunk of chunks) {
-                                    if (!existingIds.has(chunk.id)) {
-                                        searchResults.push({ ...chunk, similarity: 1.8 });
-                                        existingIds.add(chunk.id);
+                            for (const products of supplementResults) {
+                                for (const product of products) {
+                                    if (!existingIds.has(product.id)) {
+                                        searchResults.push({ ...product, similarity: 1.8 });
+                                        existingIds.add(product.id);
                                     }
                                 }
                             }
@@ -848,11 +963,31 @@ RESPONSE: (One search phrase per line, no numbering)`
             }
         }
 
-        console.log('[server] Search matched', searchResults.length, 'chunks.');
+        console.log('[server] Search matched', searchResults.length, 'products.');
 
-        const pdfContext = searchResults
-            .map(r => r.content)
-            .join('\n\n');
+        // Build structured product context for Gemini
+        const productContext = searchResults.map(p => {
+            const specs = p.specifications || {};
+            const specLines = Object.entries(specs)
+                .map(([key, val]) => {
+                    if (typeof val === 'object' && val !== null) {
+                        return `  ${key}: ${JSON.stringify(val)}`;
+                    }
+                    return `  ${key}: ${val}`;
+                })
+                .join('\n');
+            const pdfFilename = p.pdf_storage_url || `${p.product_code}.pdf`;
+            const pdfUrl = `${PDF_STORAGE_BASE}/${encodeURIComponent(pdfFilename)}`;
+            return `--- PRODUCT: ${p.product_code} ---
+Name: ${p.name || 'N/A'}
+Category: ${p.category || 'N/A'}
+Specifications:
+${specLines || '  (none)'}
+Applications: ${p.applications || 'N/A'}
+Description: ${p.description || 'N/A'}
+Datasheet PDF: ${pdfUrl}
+`;
+        }).join('\n');
 
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
@@ -863,8 +998,8 @@ RESPONSE: (One search phrase per line, no numbering)`
             const kbStats = await getKnowledgeBaseStats();
             const isBroad = searchResults.length < 3 || lowerQuery.includes('how many') || lowerQuery.includes('list') || lowerQuery.includes('categories');
             kbStatsContext = isBroad
-                ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n- Standard Product Categories:\n  * ${kbStats.categories.join('\n  * ')}\n- Recommended search topics: Fire Safety, Lifejackets, Breathing Apparatus, SOS Cabinets\n- Sample models for inspiration (if needed): ${kbStats.sampleProducts.slice(0, 8).join(', ')}\n`
-                : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total datasheets available: ${kbStats.totalDatasheets}\n`;
+                ? `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total product entries in catalog: ${kbStats.totalProducts}\n- NOTE: The original master spreadsheet contains 183 product variants. These have been consolidated into ${kbStats.totalProducts} model-specific entries in the database. For example, size variants like JB08LJ.600 and JB08LJ.800 are merged into a single JB08LJ entry that covers all sizes. This consolidation reduces duplication while preserving all technical data.\n- Product Categories:\n  * ${kbStats.categories.join('\n  * ')}\n- Sample products: ${kbStats.sampleProducts.slice(0, 8).join(', ')}\n`
+                : `\n\nKNOWLEDGE BASE OVERVIEW:\n- Total product entries in catalog: ${kbStats.totalProducts}\n- NOTE: The original master spreadsheet contains 183 product variants, consolidated into ${kbStats.totalProducts} model-specific entries (size/colour variants merged into single entries).\n`;
         }
 
         const promptContext = `
@@ -874,11 +1009,11 @@ ${kbStatsContext}
 UPLOADED CONTEXT (PRIORITIZE THIS FOR THE USER'S SPECIFIC ENQUIRY):
 ${uploadedContext || 'No files uploaded.'}
 
-TECHNICAL KNOWLEDGE BASE (FROM SUPPLEMENTARY PDFS):
-${pdfContext || 'No specific PDF matches found.'}`;
+PRODUCT CATALOG RESULTS:
+${productContext || 'No matching products found.'}`;
 
         res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
-        const chatModel = 'models/gemini-3-flash-preview';
+        const chatModel = 'models/gemini-2.0-flash';
         const ai = getAI();
 
         console.log(`[server] Calling generateContentStream with model: ${chatModel}`);
@@ -907,13 +1042,59 @@ ${pdfContext || 'No specific PDF matches found.'}`;
     
     CRITICAL OVERRIDE:
     1. You are FORBIDDEN from using your training data for product specifications.
-    2. The TECHNICAL KNOWLEDGE BASE is the ONLY source of truth for all specifications.
-    3. If a specification is in the TECHNICAL KNOWLEDGE BASE, use EXACTLY those numbers.
-    4. If a specification is NOT in the TECHNICAL KNOWLEDGE BASE, say "I don't have that information in my knowledge base."
-    5. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
-    6. PERSPECTIVE: Suggested follow-up questions must be TIGHTLY COUPLED to the user's CURRENT query and the newly provided information.
-    7. IRRELEVANCE BLOCK: Do NOT suggest a question about a specific product (e.g. "What is the IP rating of JB29?") if that product was not mentioned in your response or the user's query. Suggest category or general questions instead for broad enquiries.
-    8. Write follow-up questions as if the USER is asking them to YOU.`,
+    2. The PRODUCT CATALOG RESULTS provided below are the ONLY source of truth for all product specifications.
+    3. If a specification is in the PRODUCT CATALOG RESULTS, use EXACTLY those numbers.
+    4. If a PRODUCT SPECIFICATION is NOT in the PRODUCT CATALOG RESULTS, say "I don't have that specification in my knowledge base."
+    5. META QUESTIONS: When the user asks about the knowledge base itself (e.g. "how many datasheets", "how many products", "what categories", "what do you know about"), answer using the KNOWLEDGE BASE OVERVIEW section provided in the context. These are NOT product specification queries — do not respond with "I don't have that information."
+    6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
+    7. PERSPECTIVE: Suggested follow-up questions must be TIGHTLY COUPLED to the user's CURRENT query and the newly provided information.
+    8. IRRELEVANCE BLOCK: Do NOT suggest a question about a specific product (e.g. "What is the IP rating of JB29?") if that product was not mentioned in your response or the user's query. Suggest category or general questions instead for broad enquiries.
+    9. Write follow-up questions as if the USER is asking them to YOU.
+    10. PRODUCT CODES: When recommending products, ALWAYS include the JoBird product code (e.g. **JB08LJ**, **JB02R BA**) in bold. Never describe a product only by its category or requirement name without citing its code.
+    11. PDF LINKS: When the user asks for a PDF link, datasheet link, or download link for a product, provide the "Datasheet PDF" URL from the PRODUCT CATALOG RESULTS. Format it as a clickable link.
+    
+    SPECIFICATIONS DATA:
+    Each product in the PRODUCT CATALOG RESULTS includes a "Specifications" block.
+    This block contains structured technical data such as:
+    - IP Rating (e.g. IP56, IP67)
+    - Material / Construction (e.g. GRP, Stainless Steel)
+    - Dimensions (Height, Width, Depth)
+    - Weight
+    - Certifications / Approvals (e.g. Lloyds, ABS, MED)
+    - Locking options, colour, insulation details
+    
+    When the user asks technical questions (IP rating, material, dimensions, weight, certifications, etc.):
+    1. ALWAYS look inside the "Specifications" block of each relevant product FIRST.
+    2. Extract the exact values and present them clearly.
+    3. For comparison questions (e.g. "Do they share the same IP rating?"), extract the spec from EACH product and compare explicitly.
+    4. Only say you don't know if the specific field is genuinely absent from all relevant products' Specifications blocks.
+    
+    RESPONSE FORMATTING:
+
+    A) MULTI-PRODUCT COMPARISONS (2+ products):
+    You MUST use a Markdown table. Example:
+    
+    | Product | Weight | IP Rating | Material |
+    |---------|--------|-----------|----------|
+    | **JB08LJ** | 33 kg | IP56 | GRP |
+    | **JB10.600LJS** | 24 kg | IP56 | GRP |
+    
+    Table rules:
+    - Always wrap product codes in **bold** inside the table.
+    - Column headers should be clear and concise.
+    - If a value is not available, write "N/A" in the cell.
+    
+    B) SINGLE-PRODUCT SPECIFICATIONS:
+    Use bullet points with bold headings. Example:
+    - **Weight:** 33 kg
+    - **IP Rating:** IP56
+    - **Material:** GRP Composite
+    - **Dimensions (H x W x D):** 1140 mm x 725 mm x 535 mm
+    
+    C) UNITS:
+    Always separate the number from the unit with a space for readability:
+    - Correct: 33 kg, 1140 mm, 56 litres
+    - Incorrect: 33kg, 1140mm, 56litres`,
                         temperature: 0.0
                     }
                 }),
@@ -957,7 +1138,7 @@ ${pdfContext || 'No specific PDF matches found.'}`;
 
         // Extract citations from the response and filter datasheets
         console.log('[server] Extracting citations for final event...');
-        const citedDatasheets = filterDatasheetsByCitations(fullText, referencedDatasheets);
+        const citedDatasheets = filterDatasheetsByCitations(fullText, referencedDatasheets, searchResults);
 
         // Final safety strip for citations
         const finalOutput = stripCitations(fullText);
@@ -1014,7 +1195,7 @@ app.post('/api/search', async (req, res) => {
             return res.status(400).json({ error: 'Query is required' });
         }
 
-        const results = await searchPdfChunks(query, matchCount);
+        const results = await searchProducts(query, matchCount);
         res.json({ results });
 
     } catch (error) {

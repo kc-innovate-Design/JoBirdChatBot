@@ -259,10 +259,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const formatContent = (content: string) => {
     // Highlight product codes in text (e.g., JB10.600LJ, JB02HR, RS550)
     const highlightProductCodes = (text: string) => {
+      // Known non-product-code patterns to exclude (IP ratings, standards, etc.)
+      const nonProductCodes = /^(IP\d+|EN\d+|ISO\d+|BS\d+|IEC\d+|UL\d+|CE\d+|ATEX\d+|MED\d+)$/i;
       // Split on product codes, keeping the codes as separate segments
-      const parts = text.split(/\b([A-Z]{2,3}[\d.]+[A-Z]*)\b/);
+      const parts = text.split(/\b([A-Z]{2,3}[\d.]+[A-Z\d]*)\b/);
       return parts.map((part, i) => {
-        if (/^[A-Z]{2,3}[\d.]+[A-Z]*$/.test(part)) {
+        if (/^[A-Z]{2,3}[\d.]+[A-Z\d]*$/.test(part) && !nonProductCodes.test(part)) {
           return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{part}</strong>;
         }
         return part;
@@ -270,43 +272,129 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     };
 
     // Return segments of bolded or colored text based on markdown-like structure
-    const segments = content.split('\n');
+    // First, split content into table blocks and non-table blocks
+    const lines = content.split('\n');
+    const blocks: { type: 'text' | 'table'; lines: string[] }[] = [];
+    let currentBlock: { type: 'text' | 'table'; lines: string[] } = { type: 'text', lines: [] };
+
+    for (const line of lines) {
+      const isTableLine = line.trim().startsWith('|') && line.trim().endsWith('|');
+      if (isTableLine) {
+        if (currentBlock.type !== 'table') {
+          if (currentBlock.lines.length > 0) blocks.push(currentBlock);
+          currentBlock = { type: 'table', lines: [] };
+        }
+        currentBlock.lines.push(line.trim());
+      } else {
+        if (currentBlock.type !== 'text') {
+          if (currentBlock.lines.length > 0) blocks.push(currentBlock);
+          currentBlock = { type: 'text', lines: [] };
+        }
+        currentBlock.lines.push(line);
+      }
+    }
+    if (currentBlock.lines.length > 0) blocks.push(currentBlock);
+
+    const renderTable = (tableLines: string[], blockIdx: number) => {
+      // Filter out separator rows (|---|---|)
+      const dataRows = tableLines.filter(l => !l.match(/^\|[\s\-:|]+\|$/));
+      if (dataRows.length === 0) return null;
+
+      const parseRow = (row: string) =>
+        row.split('|').slice(1, -1).map(cell => cell.trim());
+
+      const headerCells = parseRow(dataRows[0]);
+      const bodyRows = dataRows.slice(1).map(parseRow);
+
+      return (
+        <div key={`table-${blockIdx}`} className="my-3 overflow-x-auto">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+            <thead>
+              <tr>
+                {headerCells.map((cell, ci) => (
+                  <th key={ci} style={{
+                    padding: '8px 12px',
+                    backgroundColor: '#D94637',
+                    color: 'white',
+                    fontWeight: 700,
+                    textAlign: 'left',
+                    borderBottom: '2px solid #c03d30',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {cell.replace(/\*\*/g, '')}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, ri) => (
+                <tr key={ri} style={{ backgroundColor: ri % 2 === 0 ? '#fafafa' : 'white' }}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} style={{
+                      padding: '7px 12px',
+                      borderBottom: '1px solid #e2e8f0',
+                      color: '#334155'
+                    }}>
+                      {cell.split(/(\*\*.*?\*\*)/).map((part, pi) => {
+                        if (part.startsWith('**') && part.endsWith('**')) {
+                          const inner = part.replace(/\*\*/g, '');
+                          return <strong key={pi} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
+                        }
+                        return <React.Fragment key={pi}>{highlightProductCodes(part)}</React.Fragment>;
+                      })}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    };
+
     return (
       <div className="space-y-4">
-        {segments.map((line, lid) => {
-          if (line.startsWith('**') && line.endsWith('**')) {
-            return (
-              <h4 key={lid} className="text-[14px] font-black uppercase tracking-tight mt-4 first:mt-0" style={{ color: '#D94637' }}>
-                {line.replace(/\*\*/g, '')}
-              </h4>
-            );
+        {blocks.map((block, blockIdx) => {
+          if (block.type === 'table') {
+            return renderTable(block.lines, blockIdx);
           }
-          if (line.trim().startsWith('-')) {
+          // Render text lines
+          return block.lines.map((line, lid) => {
+            const key = `${blockIdx}-${lid}`;
+            if (line.startsWith('**') && line.endsWith('**')) {
+              return (
+                <h4 key={key} className="text-[16px] font-black uppercase tracking-tight mt-4 first:mt-0" style={{ color: '#D94637' }}>
+                  {line.replace(/\*\*/g, '')}
+                </h4>
+              );
+            }
+            if (line.trim().startsWith('-')) {
+              return (
+                <div key={key} className="flex gap-2 text-[15px] leading-relaxed text-slate-700 ml-2">
+                  <span className="font-bold" style={{ color: '#D94637' }}>•</span>
+                  <span>{highlightProductCodes(line.trim().substring(1).trim())}</span>
+                </div>
+              );
+            }
+            if (line.includes('*Source:')) {
+              return (
+                <div key={key} className="text-[12px] italic text-slate-400 mt-1">
+                  {line.trim()}
+                </div>
+              );
+            }
             return (
-              <div key={lid} className="flex gap-2 text-[13px] leading-relaxed text-slate-700 ml-2">
-                <span className="font-bold" style={{ color: '#D94637' }}>•</span>
-                <span>{highlightProductCodes(line.trim().substring(1).trim())}</span>
-              </div>
+              <p key={key} className="text-[15px] leading-relaxed text-slate-800 font-medium">
+                {line.split(/(\*\*.*?\*\*)/).map((part, i) => {
+                  if (part.startsWith('**') && part.endsWith('**')) {
+                    const inner = part.replace(/\*\*/g, '');
+                    return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
+                  }
+                  return <React.Fragment key={i}>{highlightProductCodes(part)}</React.Fragment>;
+                })}
+              </p>
             );
-          }
-          if (line.includes('*Source:')) {
-            return (
-              <div key={lid} className="text-[10px] italic text-slate-400 mt-1">
-                {line.trim()}
-              </div>
-            );
-          }
-          return (
-            <p key={lid} className="text-[13px] leading-relaxed text-slate-800 font-medium">
-              {line.split(/(\*\*.*?\*\*)/).map((part, i) => {
-                if (part.startsWith('**') && part.endsWith('**')) {
-                  const inner = part.replace(/\*\*/g, '');
-                  return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
-                }
-                return <React.Fragment key={i}>{highlightProductCodes(part)}</React.Fragment>;
-              })}
-            </p>
-          );
+          });
         })}
       </div>
     );
@@ -327,7 +415,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <div className="relative group">
                   <div className={`py-2 px-4 border ${msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
                     }`}>
-                    {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[13px] font-bold">{msg.content}</div>}
+                    {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[15px] font-bold">{msg.content}</div>}
                   </div>
                 </div>
               </div>
@@ -337,7 +425,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           {/* Follow-up Questions Panel */}
           {followUpQuestions.length > 0 && !isLoading && (
             <div className="flex flex-col gap-2 mt-2 ml-11 items-start">
-              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Suggested Follow-ups:</div>
+              <div className="text-[12px] font-black text-slate-400 uppercase tracking-widest mb-1">Suggested Follow-ups:</div>
               <div className="flex flex-wrap gap-2">
                 {followUpQuestions.map((q, i) => (
                   <button
@@ -350,7 +438,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       setFollowUpQuestions([]);
                       processQuery(q, newHistory);
                     }}
-                    className="px-4 py-1.5 bg-white border border-slate-200 text-[11px] font-bold text-jobird-red hover:bg-jobird-red hover:text-white transition-all shadow-sm rounded-full"
+                    className="px-4 py-1.5 bg-white border border-slate-200 text-[13px] font-bold text-jobird-red hover:bg-jobird-red hover:text-white transition-all shadow-sm rounded-full"
                   >
                     {q}
                   </button>
@@ -373,7 +461,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               placeholder="Ask me anything..."
-              className="flex-1 px-4 py-3 bg-white border border-slate-200 outline-none text-[13px] font-bold placeholder:text-slate-300 transition-all focus:border-jobird-red disabled:bg-slate-100 shadow-inner"
+              className="flex-1 px-4 py-3 bg-white border border-slate-200 outline-none text-[15px] font-bold placeholder:text-slate-300 transition-all focus:border-jobird-red disabled:bg-slate-100 shadow-inner"
             />
             <button
               onClick={handleSend}
@@ -455,14 +543,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       {/* Datasheet Sidebar */}
       <div className="w-64 bg-white border border-slate-200 shadow-lg flex flex-col">
         <div className="p-4 bg-jobird-lightGrey border-b border-slate-200">
-          <h3 className="font-black text-slate-700 uppercase tracking-widest text-[10px] flex items-center gap-2">
+          <h3 className="font-black text-slate-700 uppercase tracking-widest text-[12px] flex items-center gap-2">
             <i className="fas fa-file-pdf text-jobird-red"></i>
             Referenced Datasheets
           </h3>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {referencedDatasheets.length === 0 ? (
-            <div className="text-[11px] text-slate-400 italic p-2">
+            <div className="text-[13px] text-slate-400 italic p-2">
               Datasheets mentioned in responses will appear here for quick reference.
             </div>
           ) : (
@@ -477,7 +565,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 >
                   <div className="flex items-start gap-2">
                     <i className="fas fa-file-alt text-slate-300 group-hover:text-jobird-red text-xs mt-0.5"></i>
-                    <div className="text-[11px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
+                    <div className="text-[13px] font-bold text-slate-700 group-hover:text-jobird-red leading-tight">
                       {ds.displayName}
                     </div>
                   </div>
@@ -485,14 +573,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <div className="flex gap-2 mt-2 pl-5">
                   <button
                     onClick={() => handleDatasheetClick(ds)}
-                    className="text-[9px] font-bold text-slate-400 hover:text-jobird-red uppercase tracking-wide"
+                    className="text-[11px] font-bold text-slate-400 hover:text-jobird-red uppercase tracking-wide"
                   >
                     Ask more
                   </button>
                   {ds.url && (
                     <button
                       onClick={(e) => handleViewPdf(ds, e)}
-                      className="text-[9px] font-bold text-jobird-red hover:text-red-700 uppercase tracking-wide flex items-center gap-1"
+                      className="text-[11px] font-bold text-jobird-red hover:text-red-700 uppercase tracking-wide flex items-center gap-1"
                     >
                       <i className="fas fa-external-link-alt text-[8px]"></i>
                       View PDF
@@ -505,7 +593,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
         {referencedDatasheets.length > 0 && (
           <div className="p-3 border-t border-slate-100">
-            <div className="text-[9px] text-slate-400 text-center">
+            <div className="text-[11px] text-slate-400 text-center">
               {referencedDatasheets.length} datasheet{referencedDatasheets.length !== 1 ? 's' : ''} found
             </div>
           </div>

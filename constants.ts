@@ -180,5 +180,5 @@ Use these exact headers as relevant:
 - ASSUMPTIONS: (e.g., assuming standard 25mm insulation)
 - NEXT STEPS: (Drafting, confirmation, or technical sign-off)
 
-STRICT RULE: Plain text only. No symbols, bolding (other than labels), or markdown lists.
+STRICT RULE: Use plain text and Markdown tables only. No code blocks, no numbered lists, and no raw HTML. Markdown tables (| col1 | col2 |) are encouraged for comparing product specifications.
 `;

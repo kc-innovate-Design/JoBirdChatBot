@@ -233,20 +233,18 @@ const App: React.FC = () => {
             onNewChat={handleNewChat}
             onDeleteSession={handleDeleteSession}
           />
-          <div className="flex-1 p-4 lg:p-8 overflow-y-auto bg-slate-50/30">
-            <div className="max-w-6xl mx-auto">
-              <ChatInterface
-                key={activeSessionId}
-                catalog={catalog}
-                activeSops={activeSops.filter(s => s.status === 'Active')}
-                onSubmitFeedback={handleSubmitFeedback}
-                selectedModel={selectedModel}
-                onOpenAdmin={() => setCurrentView('admin')}
-                initialMessages={activeSession.messages}
-                initialDatasheets={activeSession.datasheets}
-                onSessionUpdate={updateActiveSession}
-              />
-            </div>
+          <div className="flex-1 p-4 lg:p-6 overflow-y-auto bg-slate-50/30">
+            <ChatInterface
+              key={activeSessionId}
+              catalog={catalog}
+              activeSops={activeSops.filter(s => s.status === 'Active')}
+              onSubmitFeedback={handleSubmitFeedback}
+              selectedModel={selectedModel}
+              onOpenAdmin={() => setCurrentView('admin')}
+              initialMessages={activeSession.messages}
+              initialDatasheets={activeSession.datasheets}
+              onSessionUpdate={updateActiveSession}
+            />
           </div>
         </main>
       ) : (

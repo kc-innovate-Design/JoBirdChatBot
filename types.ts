@@ -70,6 +70,7 @@ export interface AuditEntry {
 export interface DatasheetReference {
   filename: string;
   displayName: string;
+  productCode?: string;
   productName?: string; // e.g. "2 x 30M Fire Hose cabinet"
   url?: string;
   source?: string;
@@ -81,6 +82,7 @@ export interface AIResponse {
 }
 
 export interface KnowledgeBaseStats {
-  totalDatasheets: number;
-  categoryMatches?: { category: string; count: number }[];
+  totalProducts: number;
+  categories?: string[];
+  sampleProducts?: string[];
 }

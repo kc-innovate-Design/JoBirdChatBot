@@ -1,20 +1,25 @@
 // Client-side wrapper that calls the secure backend API
 // Supabase service role key is now only on the server
 
-export interface PdfChunkMatch {
+export interface ProductMatch {
     id: string;
-    content: string;
-    metadata: {
-        source: string;
-        chunk: number;
-    };
+    product_code: string;
+    name: string;
+    category: string;
+    specifications: Record<string, any>;
+    description: string;
+    applications: string | null;
+    pdf_storage_url: string;
     similarity: number;
 }
 
-export async function searchPdfChunks(
+// Legacy alias for backward compatibility
+export type PdfChunkMatch = ProductMatch;
+
+export async function searchProducts(
     question: string,
     matchCount = 5
-): Promise<PdfChunkMatch[]> {
+): Promise<ProductMatch[]> {
     try {
         const response = await fetch('/api/search', {
             method: 'POST',
@@ -35,28 +40,28 @@ export async function searchPdfChunks(
     }
 }
 
+// Legacy alias
+export const searchPdfChunks = searchProducts;
+
 export interface KnowledgeBaseStats {
-    totalDatasheets: number;
-    categoryMatches?: { keyword: string; count: number; datasheets: string[] }[];
+    totalProducts: number;
+    categories?: string[];
+    sampleProducts?: string[];
 }
 
-export async function getKnowledgeBaseStats(categoryKeyword?: string): Promise<KnowledgeBaseStats> {
+export async function getKnowledgeBaseStats(): Promise<KnowledgeBaseStats> {
     try {
-        const url = categoryKeyword
-            ? `/api/stats?category=${encodeURIComponent(categoryKeyword)}`
-            : '/api/stats';
-
-        const response = await fetch(url);
+        const response = await fetch('/api/stats');
 
         if (!response.ok) {
             console.error('Stats API error:', response.status);
-            return { totalDatasheets: 0 };
+            return { totalProducts: 0 };
         }
 
         return await response.json();
     } catch (err) {
         console.error('Stats query failed:', err);
-        return { totalDatasheets: 0 };
+        return { totalProducts: 0 };
     }
 }
 
