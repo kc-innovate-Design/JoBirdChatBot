@@ -875,7 +875,7 @@ RESPONSE: (One search phrase per line, no numbering)`
             // so the AI can present the full range of options on the first response
             const categoryPatterns = [
                 { pattern: /life\s*jacket|lifejacket/i, terms: ['lifejacket', 'life jacket'] },
-                { pattern: /fire\s*hose|firehose/i, terms: ['fire hose', 'hose reel'] },
+                { pattern: /fire\s*hose|firehose|hose\s*pipe|hosepipe|\bhose/i, terms: ['fire hose', 'hose reel', 'hose'] },
                 { pattern: /fire\s*extinguisher/i, terms: ['extinguisher'] },
                 { pattern: /breathing\s*apparatus|\bba\b|scba/i, terms: ['breathing apparatus', 'BA'] },
                 { pattern: /lifebuoy|life\s*buoy|life\s*ring/i, terms: ['lifebuoy', 'life buoy'] },
@@ -893,7 +893,7 @@ RESPONSE: (One search phrase per line, no numbering)`
                     try {
                         const catSeenIds = new Set(searchResults.map(r => r.id));
                         const orQuery = matchedCategory.terms
-                            .map(t => `name.ilike.%${t}%,description.ilike.%${t}%,applications.ilike.%${t}%`)
+                            .map(t => `name.ilike.%${t}%,category.ilike.%${t}%,description.ilike.%${t}%`)
                             .join(',');
                         const { data: catProducts } = await Promise.race([
                             supabase.from('products')
