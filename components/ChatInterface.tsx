@@ -396,11 +396,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 </h4>
               );
             }
-            if (line.trim().startsWith('-')) {
+            if (line.trim().startsWith('-') || line.trim().startsWith('*') && !line.trim().startsWith('**')) {
+              const bulletText = line.trim().substring(1).trim();
               return (
                 <div key={key} className="flex gap-2 text-[15px] leading-relaxed text-slate-700 ml-2">
                   <span className="font-bold" style={{ color: '#D94637' }}>•</span>
-                  <span>{highlightProductCodes(line.trim().substring(1).trim())}</span>
+                  <span>{bulletText.split(/(\*\*.*?\*\*)/).map((part, i) => {
+                    if (part.startsWith('**') && part.endsWith('**')) {
+                      const inner = part.replace(/\*\*/g, '');
+                      return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
+                    }
+                    return <React.Fragment key={i}>{highlightProductCodes(part)}</React.Fragment>;
+                  })}</span>
                 </div>
               );
             }
