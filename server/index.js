@@ -1220,7 +1220,7 @@ app.post('/api/search', async (req, res) => {
 });
 
 // Diagnostic endpoint to check configuration without exposing secrets
-app.get('/api/diag', (req, res) => {
+app.get('/api/diag', async (req, res) => {
     const vars = Object.keys(process.env)
         .filter(k => k.includes('GEMINI') || k.includes('SUPABASE') || k.includes('FIREBASE') || k.includes('PASSWORD'))
         .reduce((acc, key) => {
@@ -1228,12 +1228,29 @@ app.get('/api/diag', (req, res) => {
             return acc;
         }, {});
 
+    // Test Supabase connectivity
+    let supabaseTest = 'not tested';
+    try {
+        const sb = getSupabase();
+        if (sb) {
+            const { data, error } = await sb.from('products').select('product_code').limit(3);
+            supabaseTest = error ? `ERROR: ${error.message}` : `OK: ${(data || []).length} products (e.g. ${(data || []).map(p => p.product_code).join(', ')})`;
+        } else {
+            supabaseTest = 'Supabase client is NULL';
+        }
+    } catch (e) {
+        supabaseTest = `EXCEPTION: ${e.message}`;
+    }
+
     res.json({
         node_env: process.env.NODE_ENV,
         port: process.env.PORT,
         vars,
+        resolved_supabase_url: SUPABASE_URL ? `${SUPABASE_URL.substring(0, 20)}...` : 'UNDEFINED',
+        resolved_supabase_key: SUPABASE_SERVICE_ROLE_KEY ? `set (length: ${SUPABASE_SERVICE_ROLE_KEY.length})` : 'UNDEFINED',
         ai_initialized: !!aiInstance,
         supabase_initialized: !!supabaseInstance,
+        supabase_test: supabaseTest,
         server_time: new Date().toISOString()
     });
 });
