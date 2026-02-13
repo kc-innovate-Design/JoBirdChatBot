@@ -989,6 +989,8 @@ Datasheet PDF: ${pdfUrl}
 `;
         }).join('\n');
 
+        console.log('[server] searchResults count before datasheet extraction:', searchResults.length);
+        console.log('[server] searchResults codes:', searchResults.map(r => r.product_code).filter(Boolean).join(', '));
         const referencedDatasheets = extractDatasheetReferences(searchResults);
         const conversationContext = buildConversationContext(history);
 
