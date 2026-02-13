@@ -257,17 +257,45 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const formatContent = (content: string) => {
+    // Render markdown links [text](url) as clickable <a> elements
+    const renderLinks = (text: string): React.ReactNode[] => {
+      const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+      const parts: React.ReactNode[] = [];
+      let lastIndex = 0;
+      let match;
+      while ((match = linkPattern.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push(text.substring(lastIndex, match.index));
+        }
+        parts.push(
+          <a key={`link-${match.index}`} href={match[2]} target="_blank" rel="noopener noreferrer"
+            style={{ color: '#D94637', textDecoration: 'underline', fontWeight: 600 }}>
+            {match[1]}
+          </a>
+        );
+        lastIndex = match.index + match[0].length;
+      }
+      if (lastIndex < text.length) {
+        parts.push(text.substring(lastIndex));
+      }
+      return parts.length > 0 ? parts : [text];
+    };
+
     // Highlight product codes in text (e.g., JB10.600LJ, JB02HR, RS550)
     const highlightProductCodes = (text: string) => {
       // Known non-product-code patterns to exclude (IP ratings, standards, etc.)
       const nonProductCodes = /^(IP\d+|EN\d+|ISO\d+|BS\d+|IEC\d+|UL\d+|CE\d+|ATEX\d+|MED\d+)$/i;
-      // Split on product codes, keeping the codes as separate segments
-      const parts = text.split(/\b([A-Z]{2,3}[\d.]+[A-Z\d]*)\b/);
-      return parts.map((part, i) => {
-        if (/^[A-Z]{2,3}[\d.]+[A-Z\d]*$/.test(part) && !nonProductCodes.test(part)) {
-          return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{part}</strong>;
-        }
-        return part;
+      // First render any markdown links, then highlight product codes in non-link parts
+      const linkedParts = renderLinks(text);
+      return linkedParts.flatMap((part, li) => {
+        if (typeof part !== 'string') return [part]; // already a React element (link)
+        const codeParts = part.split(/\b([A-Z]{2,3}[\d.]+[A-Z\d]*)\b/);
+        return codeParts.map((cp, i) => {
+          if (/^[A-Z]{2,3}[\d.]+[A-Z\d]*$/.test(cp) && !nonProductCodes.test(cp)) {
+            return <strong key={`${li}-${i}`} style={{ color: '#D94637', fontWeight: 900 }}>{cp}</strong>;
+          }
+          return cp;
+        });
       });
     };
 

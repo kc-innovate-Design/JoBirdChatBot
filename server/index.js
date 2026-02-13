@@ -1066,7 +1066,7 @@ ${productContext || 'No matching products found.'}`;
     8. IRRELEVANCE BLOCK: Do NOT suggest a question about a specific product (e.g. "What is the IP rating of JB29?") if that product was not mentioned in your response or the user's query. Suggest category or general questions instead for broad enquiries.
     9. Write follow-up questions as if the USER is asking them to YOU.
     10. PRODUCT CODES: When recommending products, ALWAYS include the JoBird product code (e.g. **JB08LJ**, **JB02R BA**) in bold. Never describe a product only by its category or requirement name without citing its code.
-    11. PDF LINKS: When the user asks for a PDF link, datasheet link, or download link for a product, provide the "Datasheet PDF" URL from the PRODUCT CATALOG RESULTS. Format it as a clickable link.
+    11. PDF LINKS: When the user asks for a PDF link, datasheet link, or download link for a product, provide the "Datasheet PDF" URL from the PRODUCT CATALOG RESULTS. Format it as a markdown link with the display text "Datasheet PDF": [Datasheet PDF](url). NEVER show the raw URL — always use the markdown link format.
     
     SPECIFICATIONS DATA:
     Each product in the PRODUCT CATALOG RESULTS includes a "Specifications" block.
