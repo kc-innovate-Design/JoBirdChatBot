@@ -148,10 +148,13 @@ async function embedQuery(text) {
 // Search Supabase products table (Hybrid: keyword + fuzzy + vector)
 async function searchProducts(question, matchCount = 10) {
     const supabase = getSupabase();
-    if (!supabase) return [];
+    if (!supabase) {
+        console.error('[search] CRITICAL: Supabase not initialized! SUPABASE_URL:', SUPABASE_URL ? 'set' : 'MISSING', 'SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_ROLE_KEY ? 'set' : 'MISSING');
+        return [];
+    }
 
     try {
-        console.log(`[server] Hybrid Product Search for: "${question}"`);
+        console.log(`[search] Hybrid Product Search for: "${question}", matchCount=${matchCount}`);
         let results = [];
         const existingIds = new Set();
 
@@ -169,9 +172,13 @@ async function searchProducts(question, matchCount = 10) {
                         .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
                         .or(`product_code.ilike.%${partNumber}%,name.ilike.%${partNumber}%`)
                         .limit(matchCount)
-                        .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 2.0, type: 'keyword' }))),
+                        .then(({ data, error }) => {
+                            if (error) console.error('[search] Keyword search DB error:', error.message);
+                            console.log(`[search] Keyword search results: ${(data || []).length}`);
+                            return (data || []).map(r => ({ ...r, similarity: 2.0, type: 'keyword' }));
+                        }),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('Keyword Search Timeout')), DB_TIMEOUT))
-                ]).catch(err => { console.warn(`[server] Keyword search failed: ${err.message}`); return []; })
+                ]).catch(err => { console.warn(`[search] Keyword search failed: ${err.message}`); return []; })
             );
         }
 
@@ -199,9 +206,13 @@ async function searchProducts(question, matchCount = 10) {
                         .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
                         .or(orQuery)
                         .limit(matchCount)
-                        .then(({ data }) => (data || []).map(r => ({ ...r, similarity: 1.5, type: 'fuzzy' }))),
+                        .then(({ data, error }) => {
+                            if (error) console.error('[search] Fuzzy search DB error:', error.message);
+                            console.log(`[search] Fuzzy search results: ${(data || []).length}, terms: ${fuzzyTerms.join(', ')}`);
+                            return (data || []).map(r => ({ ...r, similarity: 1.5, type: 'fuzzy' }));
+                        }),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('Fuzzy Search Timeout')), DB_TIMEOUT))
-                ]).catch(err => { console.warn(`[server] Fuzzy search failed: ${err.message}`); return []; })
+                ]).catch(err => { console.warn(`[search] Fuzzy search failed: ${err.message}`); return []; })
             );
         }
 
@@ -213,17 +224,19 @@ async function searchProducts(question, matchCount = 10) {
                         embedQuery(question),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding Timeout')), 15000))
                     ]);
-                    const { data } = await supabase.rpc('match_products', { query_embedding: embedding, match_count: matchCount });
+                    const { data, error: rpcError } = await supabase.rpc('match_products', { query_embedding: embedding, match_count: matchCount });
+                    if (rpcError) console.error('[search] Vector RPC error:', rpcError.message);
+                    console.log(`[search] Vector search results: ${(data || []).length}`);
                     return (data || []).map(r => ({ ...r, type: 'vector' }));
                 } catch (vErr) {
-                    console.warn(`[server] Vector Search failed: ${vErr.message}`);
+                    console.warn(`[search] Vector Search failed: ${vErr.message}`);
                     return [];
                 }
             })()
         );
 
         const allResults = await Promise.all(searchPromises);
-        console.log(`[server] Parallel product search completed in ${Date.now() - startTime}ms`);
+        console.log(`[search] Parallel product search completed in ${Date.now() - startTime}ms, total batches: ${allResults.length}, total items: ${allResults.reduce((s, b) => s + b.length, 0)}`);
 
         // Merge and deduplicate by product ID
         for (const batch of allResults) {
