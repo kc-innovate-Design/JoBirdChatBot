@@ -669,20 +669,24 @@ app.post('/api/chat/stream', async (req, res) => {
         );
 
         // Even if it's a follow-up, if the user is asking about specs/ratings/dimensions,
-        // we should re-fetch product data so Gemini has the Specifications block
-        const needsSpecData = /\b(ip\s*rat|dimen|material|weight|height|width|depth|certif|approval|rating|specs|specification|construction|colou?r|locking|insulation)/i.test(lowerQuery);
+        // or requesting more details about a product, we should re-fetch product data
+        const needsSpecData = /\b(ip\s*rat|dimen|material|weight|height|width|depth|certif|approval|rating|specs|specification|construction|colou?r|locking|insulation|tell me more|more about|more info|details|describe|full|everything about|what is|what are|features|capacity|options?|extras|accessories)/i.test(lowerQuery);
+
+        // If the query explicitly mentions a product code, ALWAYS search the database
+        const queryContainsProductCode = /[A-Z]{2,3}[\d.]+[A-Z\d]*/i.test(query);
 
         let searchResults = [];
         let isFollowUpPath = false;
 
-        console.log(`[server] Follow-up check: isFollowUp=${isFollowUp}, needsSpecData=${needsSpecData}, historyProducts=${historyProductCodes.length}, hasHistory=${hasHistory}`);
+        console.log(`[server] Follow-up check: isFollowUp=${isFollowUp}, needsSpecData=${needsSpecData}, queryContainsProductCode=${queryContainsProductCode}, historyProducts=${historyProductCodes.length}, hasHistory=${hasHistory}`);
 
-        if (isFollowUp && !uploadedContext && !needsSpecData) {
+        if (isFollowUp && !uploadedContext && !needsSpecData && !queryContainsProductCode) {
             // === FAST PATH: Skip search entirely ===
-            console.log('[server] PATH: FAST (follow-up, no spec data needed)');
+            // Only for truly conversational follow-ups with no product codes or data requests
+            console.log('[server] PATH: FAST (follow-up, no spec data needed, no product codes)');
             res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
             isFollowUpPath = true;
-        } else if (isFollowUp && needsSpecData && historyProductCodes.length > 0) {
+        } else if (isFollowUp && (needsSpecData || queryContainsProductCode) && historyProductCodes.length > 0) {
             // === SPEC FOLLOW-UP PATH: Fetch specific products by code from history ===
             console.log('[server] PATH: SPEC FOLLOW-UP — fetching history products:', historyProductCodes.join(', '));
             res.write('data: ' + JSON.stringify({ type: 'status', message: 'Looking up specifications...' }) + '\n\n');
