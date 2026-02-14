@@ -195,11 +195,11 @@ async function searchProducts(question, matchCount = 10) {
         Object.entries(synonymMap).forEach(([phrase, synonym]) => {
             if (normalizedQuery.includes(phrase)) fuzzyTerms.push(synonym);
         });
-        const individualWords = normalizedQuery.split(/[\s.\-_]+/).filter(w => w.length > 3 && !w.match(/tell|about|show|what|have|find|with|does|include|list|cabinets|will|hold/i));
+        const individualWords = normalizedQuery.split(/[\s.\-_]+/).filter(w => w.length > 2 && !w.match(/^(tell|about|show|what|have|find|with|does|include|list|will|hold|the|for|and|are|can|how|you|your|any|all|get|our|its|than|from|this|that|they|them|each|also|some|most|come|give|need|want|best|more|very|much|many|just|like|look|into|been|when|only|make|made|know|good|well|work|same|take|keep|help|sure|used|such|other|could|would|should|which|these|those|their|there|where|still|able|info|available|options|option)$/i));
         fuzzyTerms = [...new Set([...fuzzyTerms, ...individualWords])];
 
         if (fuzzyTerms.length > 0) {
-            const orQuery = fuzzyTerms.map(term => `name.ilike.%${term}%,category.ilike.%${term}%,description.ilike.%${term}%`).join(',');
+            const orQuery = fuzzyTerms.map(term => `name.ilike.%${term}%,category.ilike.%${term}%,description.ilike.%${term}%,applications.ilike.%${term}%`).join(',');
             searchPromises.push(
                 Promise.race([
                     supabase.from('products')
@@ -841,7 +841,7 @@ RESPONSE: (One search phrase per line, no numbering)`
                     console.log('[server] Meta/overview query detected — skipping product search.');
                 } else {
                     const expandedQuery = await expandQuery(query, history);
-                    searchResults = await searchProducts(expandedQuery, 10);
+                    searchResults = await searchProducts(expandedQuery, 15);
                 }
             }
 
@@ -867,7 +867,8 @@ RESPONSE: (One search phrase per line, no numbering)`
                             if (!seenIds.has(product.id)) {
                                 const specStr = JSON.stringify(product.specifications || {}).toLowerCase();
                                 const descStr = (product.description || '').toLowerCase();
-                                if (specStr.includes(specValue.toLowerCase()) || descStr.includes(specValue.toLowerCase())) {
+                                const appsStr = (product.applications || '').toLowerCase();
+                                if (specStr.includes(specValue.toLowerCase()) || descStr.includes(specValue.toLowerCase()) || appsStr.includes(specValue.toLowerCase())) {
                                     searchResults.push({ ...product, similarity: 1.9, type: 'spec-filter' });
                                     seenIds.add(product.id);
                                     specAdded++;
@@ -887,7 +888,7 @@ RESPONSE: (One search phrase per line, no numbering)`
             // When a query mentions a product category, fetch ALL matching products
             // so the AI can present the full range of options on the first response
             const categoryPatterns = [
-                { pattern: /life\s*jacket|lifejacket/i, terms: ['lifejacket', 'life jacket'] },
+                { pattern: /life\s*jacket|lifejacket/i, terms: ['lifejacket', 'life jacket', 'automatic life'] },
                 { pattern: /fire\s*hose|firehose|hose\s*pipe|hosepipe|\bhose/i, terms: ['fire hose', 'hose reel', 'hose'] },
                 { pattern: /fire\s*extinguisher/i, terms: ['extinguisher'] },
                 { pattern: /breathing\s*apparatus|\bba\b|scba/i, terms: ['breathing apparatus', 'BA'] },
@@ -896,6 +897,13 @@ RESPONSE: (One search phrase per line, no numbering)`
                 { pattern: /wash\s*down/i, terms: ['wash down', 'washdown'] },
                 { pattern: /first\s*aid/i, terms: ['first aid'] },
                 { pattern: /electrical|ppe/i, terms: ['electrical', 'PPE'] },
+                { pattern: /general\s*purpose|utility|multi.?purpose/i, terms: ['general purpose', 'utility'] },
+                { pattern: /stretcher/i, terms: ['stretcher'] },
+                { pattern: /\bsos\b|rescue\s*line|rescue\s*equipment/i, terms: ['SOS', 'rescue'] },
+                { pattern: /descent\s*device/i, terms: ['descent'] },
+                { pattern: /\bev\b|electric\s*vehicle|fire\s*blanket/i, terms: ['EV', 'fire blanket'] },
+                { pattern: /life\s*raft|liferaft/i, terms: ['liferaft', 'life raft'] },
+                { pattern: /foam/i, terms: ['foam'] },
             ];
 
             const matchedCategory = categoryPatterns.find(c => c.pattern.test(lowerQuery));
@@ -929,6 +937,60 @@ RESPONSE: (One search phrase per line, no numbering)`
                         searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 30);
                     } catch (err) {
                         console.warn('[server] Category supplement failed:', err.message);
+                    }
+                }
+            }
+
+            // === FEATURE/ATTRIBUTE SUPPLEMENT ===
+            // When a query asks about product features (colours, heaters, insulation, locking, extras, etc.)
+            // scan ALL products to find those that mention the relevant feature
+            const featurePatterns = [
+                { pattern: /colou?r|paint|ral|finish/i, terms: ['colour', 'color', 'ral', 'paint', 'finish'] },
+                { pattern: /heater|heated|heating/i, terms: ['heater', 'heated', 'heating'] },
+                { pattern: /insulat/i, terms: ['insulation', 'insulated'] },
+                { pattern: /lock|locking/i, terms: ['lock', 'locking'] },
+                { pattern: /optional|extras|option|upgrade/i, terms: ['optional', 'extras', 'option'] },
+                { pattern: /mount|wall.?mount|bracket/i, terms: ['mount', 'mounting', 'bracket'] },
+                { pattern: /window|glazed|transparent/i, terms: ['window', 'glazed'] },
+                { pattern: /shelf|shelves|rack/i, terms: ['shelf', 'shelves', 'rack'] },
+                { pattern: /arctic|cold|frost/i, terms: ['arctic', 'cold', 'frost'] },
+                { pattern: /door|hinge|seal/i, terms: ['door', 'hinge', 'seal'] },
+            ];
+
+            const matchedFeature = featurePatterns.find(f => f.pattern.test(lowerQuery));
+            if (matchedFeature) {
+                console.log('[server] Feature supplement triggered for:', matchedFeature.terms.join('/'));
+                const supabase = getSupabase();
+                if (supabase) {
+                    try {
+                        const featSeenIds = new Set(searchResults.map(r => r.id));
+                        const { data: allProducts } = await Promise.race([
+                            supabase.from('products')
+                                .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                                .limit(200),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Feature Filter Timeout')), DB_TIMEOUT))
+                        ]);
+
+                        let featAdded = 0;
+                        for (const product of (allProducts || [])) {
+                            if (!featSeenIds.has(product.id)) {
+                                const specStr = JSON.stringify(product.specifications || {}).toLowerCase();
+                                const descStr = (product.description || '').toLowerCase();
+                                const appsStr = (product.applications || '').toLowerCase();
+                                const combined = specStr + ' ' + descStr + ' ' + appsStr;
+
+                                const hasFeature = matchedFeature.terms.some(term => combined.includes(term.toLowerCase()));
+                                if (hasFeature) {
+                                    searchResults.push({ ...product, similarity: 1.85, type: 'feature-filter' });
+                                    featSeenIds.add(product.id);
+                                    featAdded++;
+                                }
+                            }
+                        }
+                        console.log('[server] Feature supplement added', featAdded, 'products for', matchedFeature.terms[0]);
+                        searchResults = searchResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 30);
+                    } catch (err) {
+                        console.warn('[server] Feature supplement failed:', err.message);
                     }
                 }
             }
