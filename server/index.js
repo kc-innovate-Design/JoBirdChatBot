@@ -687,22 +687,30 @@ app.post('/api/chat/stream', async (req, res) => {
             res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
             isFollowUpPath = true;
         } else if (isFollowUp && (needsSpecData || queryContainsProductCode) && historyProductCodes.length > 0) {
-            // === SPEC FOLLOW-UP PATH: Fetch specific products by code from history ===
-            console.log('[server] PATH: SPEC FOLLOW-UP — fetching history products:', historyProductCodes.join(', '));
+            // === SPEC FOLLOW-UP PATH: Fetch specific products by code from history + current query ===
+            // Also extract codes from the current query itself (user may type the code directly)
+            const queryCodeRegex = /\b([A-Z]{2,3}[\d.]+[A-Z\d]*)\b/gi;
+            const queryCodeMatches = [...query.matchAll(queryCodeRegex)].map(m => m[1].toUpperCase());
+            const allCodes = [...new Set([...queryCodeMatches, ...historyProductCodes])];
+
+            console.log('[server] PATH: SPEC FOLLOW-UP — fetching products for codes:', allCodes.join(', '));
             res.write('data: ' + JSON.stringify({ type: 'status', message: 'Looking up specifications...' }) + '\n\n');
 
             const supabase = getSupabase();
             if (supabase) {
                 try {
                     const codeResults = await Promise.race([
-                        Promise.all(historyProductCodes.slice(0, 10).map(code =>
-                            supabase.from('products')
+                        Promise.all(allCodes.slice(0, 10).map(code => {
+                            // Use wildcard matching to handle dots, dashes, and partial codes
+                            // e.g., "RS300.600LJ" should match "RS300-600LJ" or "RS300600LJ"
+                            const baseCode = code.replace(/[.\-]/g, '%');
+                            return supabase.from('products')
                                 .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
-                                .ilike('product_code', code)
-                                .limit(1)
+                                .or(`product_code.ilike.%${baseCode}%,name.ilike.%${baseCode}%`)
+                                .limit(3)
                                 .then(({ data }) => data || [])
-                                .catch(() => [])
-                        )),
+                                .catch(() => []);
+                        })),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('Spec lookup timeout')), DB_TIMEOUT))
                     ]);
 
@@ -719,6 +727,14 @@ app.post('/api/chat/stream', async (req, res) => {
                 } catch (err) {
                     console.warn('[server] Spec follow-up lookup failed:', err.message);
                 }
+            }
+
+            // FALLBACK: If SPEC FOLLOW-UP found nothing, fall through to the standard search pipeline
+            if (searchResults.length === 0) {
+                console.log('[server] SPEC FOLLOW-UP found 0 results — falling back to STANDARD search.');
+                res.write('data: ' + JSON.stringify({ type: 'status', message: 'Searching Knowledge Base...' }) + '\n\n');
+                const expandedQuery = await expandQuery(query, history);
+                searchResults = await searchProducts(expandedQuery, 15);
             }
         } else {
             // === STANDARD PATH: Full search pipeline ===
