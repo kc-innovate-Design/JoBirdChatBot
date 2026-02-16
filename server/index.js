@@ -28,6 +28,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 const APP_PASSWORD = process.env.APP_PASSWORD || process.env.VITE_APP_PASSWORD || 'jobird2026';
+const PDF_STORAGE_BASE = 'https://atmvjoymebksyajxfhwo.supabase.co/storage/v1/object/public/datasheets';
 
 let aiInstance = null;
 let supabaseInstance = null;
@@ -77,51 +78,49 @@ function getSupabase() {
 
 // System instruction for the AI
 // System instruction for the AI
-const SYSTEM_INSTRUCTION = `You are JoBird Cabinet Advisor, a concise and helpful assistant for JoBird salespeople and sales trainees.
+const SYSTEM_INSTRUCTION = `
+1. ROLE & PURPOSE
+You are the JoBird Cabinet Advisor, a senior technical sales engineer. Your goal is to guide the user to the single best GRP cabinet from the JoBird catalog. You are an expert filter, not a raw search engine.
 
-YOUR PURPOSE:
-Help sales staff quickly identify the correct GRP cabinet for their customer's requirements. Keep responses SHORT and helpful.
+2. MANDATORY OPERATIONAL RULES
+Result Limit: Never suggest more than 3 models in a single response.
 
-RESPONSE FORMAT (CRITICAL):
-For each product recommendation, provide ONLY:
-1. **Product Name** (bold, e.g., **JB02HR**)
-2. A helpful summary (2-3 sentences) of why it fits the requirement. If recommending a general-purpose cabinet for a specific storage need, focus on how its size and protection (IP rating) meet the customer's needs.
+Comparison Format: All comparisons between 2+ models MUST use a Markdown table. Bulleted lists for technical comparisons are strictly forbidden.
 
-Example response:
-**JB02HR** — Recommended for its versatility in storing 2 x 30M hoses or other safety equipment. It provides IP56 protection and is Lloyd's approved for marine environments.
+Dimension Priority: If a user specifies a height (e.g., "at least 950 mm"), you MUST exclude every model that does not meet that minimum.
 
-**JB17** — Large life jacket cabinet for up to 24 suits. Arctic-rated options with heaters and insulation available.
+The "Unknown" Rule: If H, W, or D are "Not specified" by the user, mark the Match Status as "UNKNOWN". Never mark it as "PASS" unless the user's specific requirement is met.
 
-DO NOT provide full specifications unless the user explicitly asks for more details. Keep initial responses brief so the chat stays clean.
+No Code Leaks: Do not use internal "Chain of Thought" headers or process steps in the final output. Jump straight to the response template.
 
-CATEGORY QUERIES:
-When the user asks about a CATEGORY of products (e.g., "what cabinets for life jackets", "show me fire hose options", "do you have extinguisher cabinets"), list ALL matching products from the provided context, not just the top 2-3. Give each product a brief 1-sentence description. The salesperson needs to see the FULL RANGE of options available.
+Product Name Integrity: JoBird product names are ONLY codes like **JB14**, **RS300LJ**, **SOS506**. Third-party names (customers, installers, vessel names, companies) found in datasheet content must NEVER be appended to or mixed with product codes. You may mention them separately if relevant to the user's query, but never as part of the product name.
 
-UPLOADED CUSTOMER REQUIREMENTS:
-If the user uploads a file (email, quote, spec sheet), treat it as a customer requirements document:
-1. Identify the DISTINCT PRODUCT CATEGORIES the customer needs (e.g., "Fire Hose Cabinet", "Electrical PPE Storage").
-2. For EACH category, recommend ONE best-fit JoBird product with a clear explanation of how it matches.
-3. Include key specs: dimensions, IP rating, material, and any relevant options.
-4. If no exact-purpose product exists, recommend the CLOSEST general-purpose GRP cabinet that meets the size, environment and protection requirements. JoBird GRP cabinets are versatile and can be used for storage of equipment beyond their primary marketing category. Be positive about the "best fit" rather than lead with what isn't available.
-5. Keep it concise — the salesperson needs a quick-reference answer, not a feature-by-feature matrix.
+Datasheet Links: You MUST format every link as [Datasheet PDF](url) using ONLY the OFFICIAL_DATASHEET_URL from the catalog context. NEVER use jobird.co.uk links.
 
-FORMATTING RULES:
-1. Use **bold** for product names only.
-2. NO markdown symbols (###, *, -) for formatting.
-3. One product per short paragraph.
-4. DO NOT include source citations, filenames, or parentheses containing "Source" (e.g., "(Source: ...)") in the chat response.
+3. RESPONSE MODES
+MODE A: DISCOVERY (Missing Specs)
+Use this when the query is broad or missing dimensions.
+Main Body: State: "To give you an accurate recommendation, I need to know:" followed by a list of 2-3 specific questions regarding quantity and dimensions.
+Buttons: Provide user-led help actions (e.g., "How to measure equipment").
 
-FOLLOW-UP QUESTIONS:
-At the end, provide exactly 4 datasheet-related follow-up questions.
-If you listed multiple products, make the questions COMPARATIVE (e.g., "How do the storage capacities compare?", "Which is the most compact option?", "Do they share the same IP rating?").
-If you mentioned only one product, make them specific to that product.
-Format: [[FOLLOWUP]] Question 1 | Question 2 | Question 3 | Question 4
+MODE B: RECOMMENDATION (Specs Provided)
+Requirements Analysis: List the extracted H x W x D requirements.
+Verification Table: You MUST use this exact Markdown table format with pipe characters and a separator row:
 
-RULES:
-1. NEVER hallucinate specs - use exact numbers from context.
-2. If info is missing for a specific model, recommend a suitable alternative based on size and protection requirements if possible.
-3. You can answer general questions about the Knowledge Base (e.g., "What categories are available?") using the provided KNOWLEDGE BASE OVERVIEW.
-4. Ignore any files with "test" in the name.`;
+| Spec | User Requirement | JB14 Specs | Status |
+| :--- | :--- | :--- | :--- |
+| Height | 950 mm | 1296 mm | PASS |
+| Width | 600 mm | 602 mm | PASS |
+| Depth | Not specified | 370 mm | UNKNOWN |
+
+CRITICAL: Tables MUST have the separator row (| :--- | :--- |) on line 2. Without it, the table will not render.
+Technical Justification: One sentence explaining the fit + [Datasheet PDF](url).
+
+4. SUGGESTED FOLLOW-UPS (UI BUTTONS)
+MANDATORY: Every response MUST end with exactly 4 follow-up questions written from the USER'S perspective.
+Format: [[FOLLOWUP]] Action 1 | Action 2 | Action 3 | Action 4
+NEVER use [[Question text]] format. ALWAYS use the single [[FOLLOWUP]] tag followed by pipe-separated actions.
+Content Examples: "Show me internal dimensions," "Compare JB14 vs JB15," "What is the lead time?"`;
 
 // Embed query using Gemini
 async function embedQuery(text) {
@@ -285,7 +284,7 @@ async function expandQuery(query, history) {
     if (!ai) return query;
 
     try {
-        console.log(`[server] Expanding query: "${query}" using gemini-3-flash-preview...`);
+        console.log(`[server] Expanding query: "${query}" using gemini-2.0-flash...`);
         const conversationSummary = (history || []).slice(-3)
             .map(m => `${m.role.toUpperCase()}: ${m.content}`)
             .join('\n');
@@ -293,7 +292,7 @@ async function expandQuery(query, history) {
         // Added timeout to prevent hang
         const result = await Promise.race([
             ai.models.generateContent({
-                model: 'models/gemini-3-flash-preview',
+                model: 'models/gemini-2.0-flash',
                 contents: [{
                     role: 'user',
                     parts: [{
@@ -371,16 +370,23 @@ async function decomposeEnquiry(query) {
 
 // Extract datasheet references from product search results
 // PDFs are stored in the original Supabase project's public storage bucket
-const PDF_STORAGE_BASE = 'https://atmvjoymebksyajxfhwo.supabase.co/storage/v1/object/public/datasheets';
+// Storage base URL for datasheets (now dynamic)
 
 function extractDatasheetReferences(searchResults) {
     const uniqueProducts = new Map();
 
-    console.log('[datasheets] Extracting from', searchResults.length, 'search results');
+    console.log(`[datasheets] Extracting from ${searchResults?.length || 0} search results`);
+    if (!searchResults || searchResults.length === 0) {
+        console.warn('[datasheets] WARNING: No search results to extract from!');
+        return [];
+    }
 
     for (const product of searchResults) {
         const code = product.product_code;
-        if (!code) continue;
+        if (!code) {
+            console.log(`[datasheets] Skipping product without code: ${product.name || 'Unknown'}`);
+            continue;
+        }
 
         const normalizedKey = code.toLowerCase().trim();
         if (!uniqueProducts.has(normalizedKey)) {
@@ -391,97 +397,69 @@ function extractDatasheetReferences(searchResults) {
                 productCode: code,
                 url: `${PDF_STORAGE_BASE}/${encodeURIComponent(pdfFilename)}`
             };
-            console.log('[datasheets] Adding:', code, '→', entry.url.substring(0, 80));
+            console.log(`[datasheets] Extracted: ${code} URL: ${entry.url.substring(0, 80)}...`);
             uniqueProducts.set(normalizedKey, entry);
         }
     }
 
-    console.log('[datasheets] Total unique datasheets:', uniqueProducts.size);
+    console.log(`[datasheets] Total unique extracted: ${uniqueProducts.size}`);
     return Array.from(uniqueProducts.values());
 }
 
 // Filter datasheets to only include those actually cited in the AI response
 function filterDatasheetsByCitations(responseText, allDatasheets, searchResults) {
+    console.log(`[filter] Starting filter with ${allDatasheets?.length || 0} datasheets and response length ${responseText?.length || 0}`);
     if (!responseText || !allDatasheets || allDatasheets.length === 0) {
-        console.log('[filter] No response or datasheets to filter');
         return [];
     }
 
-    // Extract product codes from bold mentions like **JB02HR** and Source: citations
-    const productNamePattern = /\*\*([A-Z]{2,3}[\d.]+[A-Za-z\d]*(?:\s+[A-Za-z]+)*?)\*\*/gi;
-    const sourcePattern = /Source:\s*([^\n\)]+)/gi;
-
     const citedProductCodes = new Set();
+
+    // Pattern 1: Bold code only, e.g. **JB02HR**
+    const shortBoldPattern = /\*\*([A-Z]{2,3}[\d.]+[A-Za-z\d]*)\*\*/gi;
     let match;
-
-    // Extract from **ProductCode** bold mentions
-    while ((match = productNamePattern.exec(responseText)) !== null) {
-        const codeMatch = match[1].trim().match(/^[A-Z]{2,3}[\d.]+[A-Za-z\d]*/i);
-        if (codeMatch) {
-            citedProductCodes.add(codeMatch[0].toLowerCase());
-        }
+    while ((match = shortBoldPattern.exec(responseText)) !== null) {
+        citedProductCodes.add(match[1].toLowerCase());
     }
 
-    // Extract from Source: citations
-    while ((match = sourcePattern.exec(responseText)) !== null) {
-        const codeMatch = match[1].trim().match(/[A-Z]{2,3}[\d.]+[A-Za-z\d]*/i);
-        if (codeMatch) {
-            citedProductCodes.add(codeMatch[0].toLowerCase());
-        }
+    // Pattern 2: Bold full product name, e.g. **JB93 Emergency Equipment Chest:**
+    // Extracts just the product code from the start of the bold phrase
+    const longBoldPattern = /\*\*([A-Z]{2,3}[\d.]+[A-Za-z\d]*)\s+[^*]+\*\*/gi;
+    while ((match = longBoldPattern.exec(responseText)) !== null) {
+        citedProductCodes.add(match[1].toLowerCase());
     }
 
-    // Direct product code scan: check if any search result product codes appear in the response
-    const lowerResponse = responseText.toLowerCase();
-    if (searchResults && searchResults.length > 0) {
-        for (const product of searchResults) {
-            if (product.product_code) {
-                const code = product.product_code.toLowerCase();
-                if (lowerResponse.includes(code)) {
-                    citedProductCodes.add(code);
-                    console.log('[filter] Direct code match in response:', product.product_code);
-                }
-            }
-            // Also check if significant product name words appear in the response
-            // Use strict matching to avoid false positives from generic terms
-            if (product.product_code && product.name) {
-                const stopWords = [
-                    'cabinet', 'cabinets', 'storage', 'marine', 'fire', 'safety', 'with', 'from',
-                    'that', 'this', 'type', 'automatic', 'manual', 'designed', 'protection',
-                    'environment', 'environments', 'harsh', 'offshore', 'approved', 'composites',
-                    'resistant', 'gelcoat', 'gelcoats', 'lloyds', 'equipment', 'door', 'seal',
-                    'hose', 'reel', 'extinguisher', 'jacket', 'jackets', 'life', 'lifejacket',
-                    'general', 'purpose', 'weather', 'proof', 'rated', 'outdoor'
-                ];
-                const nameParts = product.name.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-                const significantWords = nameParts.filter(w => !stopWords.includes(w));
-                // Require at least 3 unique significant words and 70% match to reduce false positives
-                if (significantWords.length >= 3) {
-                    const matchCount = significantWords.filter(w => lowerResponse.includes(w)).length;
-                    if (matchCount >= 3 && matchCount >= significantWords.length * 0.7) {
-                        citedProductCodes.add(product.product_code.toLowerCase());
-                        console.log('[filter] Name match:', product.product_code, '— matched', matchCount, 'of', significantWords.length, 'name words');
-                    }
-                }
-            }
-        }
+    // Pattern 3: Unbolded product codes like JB02HR, RS300LJ mentioned in text
+    const unboldedPattern = /\b(JB\d{2,3}[A-Z]{0,4}|RS\d{2,4}[A-Z]{0,4}|SOS\d{2,4}[A-Z]{0,4}|HS\d{2,4}[A-Z]{0,4})\b/gi;
+    while ((match = unboldedPattern.exec(responseText)) !== null) {
+        citedProductCodes.add(match[1].toLowerCase());
     }
 
-    console.log('[filter] Cited product codes:', Array.from(citedProductCodes));
-    console.log('[filter] Available datasheets:', allDatasheets.map(d => d.productCode || d.filename));
+    console.log(`[filter] Cited product codes from AI response:`, [...citedProductCodes]);
 
-    // Filter datasheets by product code match
     const filtered = allDatasheets.filter(ds => {
         const dsCode = (ds.productCode || ds.filename).toLowerCase();
         for (const cited of citedProductCodes) {
-            if (dsCode.includes(cited) || cited.includes(dsCode)) {
-                console.log('[filter] Match:', dsCode, '↔', cited);
+            // Exact match
+            if (dsCode === cited) {
+                console.log(`[filter] SIDEBAR MATCH (exact): ${dsCode} === ${cited}`);
+                return true;
+            }
+            // Cited code is a prefix of the datasheet code (e.g. "jb02hr" matches "jb02hr-mk2")
+            if (dsCode.startsWith(cited) && cited.length >= 4) {
+                console.log(`[filter] SIDEBAR MATCH (prefix): ${dsCode} starts with ${cited}`);
+                return true;
+            }
+            // Datasheet code is a prefix of cited code (e.g. datasheet "jb02" matches cited "jb02hr")
+            if (cited.startsWith(dsCode) && dsCode.length >= 4) {
+                console.log(`[filter] SIDEBAR MATCH (reverse): ${cited} starts with ${dsCode}`);
                 return true;
             }
         }
         return false;
     });
 
-    console.log('[filter] Final datasheets:', filtered.map(d => d.productCode || d.filename));
+    console.log(`[filter] Final sidebar count: ${filtered.length}`);
     return filtered;
 }
 
@@ -592,7 +570,7 @@ app.get('/api/config', (req, res) => {
         VITE_FIREBASE_MESSAGING_SENDER_ID: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
         VITE_FIREBASE_APP_ID: process.env.VITE_FIREBASE_APP_ID,
         VITE_FIREBASE_MEASUREMENT_ID: process.env.VITE_FIREBASE_MEASUREMENT_ID,
-        VITE_GEMINI_LIVE_API_KEY: process.env.VITE_GEMINI_LIVE_API_KEY || '', // Never fall back to unrestricted key
+        VITE_GEMINI_LIVE_API_KEY: '', // Feature removed
         VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || SUPABASE_URL
     });
 });
@@ -753,7 +731,7 @@ app.post('/api/chat/stream', async (req, res) => {
                     try {
                         const extractResult = await Promise.race([
                             ai.models.generateContent({
-                                model: 'models/gemini-3-flash-preview',
+                                model: 'models/gemini-2.0-flash',
                                 contents: [{
                                     role: 'user',
                                     parts: [{
@@ -1080,7 +1058,7 @@ Specifications:
 ${specLines || '  (none)'}
 Applications: ${p.applications || 'N/A'}
 Description: ${p.description || 'N/A'}
-Datasheet PDF: ${pdfUrl}
+OFFICIAL_DATASHEET_URL: ${pdfUrl}
 `;
         }).join('\n');
 
@@ -1109,6 +1087,13 @@ ${uploadedContext || 'No files uploaded.'}
 PRODUCT CATALOG RESULTS:
 ${productContext || 'No matching products found.'}`;
 
+        console.log(`[server] Prompt Context built. Length: ${promptContext.length}. Products: ${searchResults.length}`);
+        // Log individual product URLs for verification
+        searchResults.forEach(p => {
+            const pdfFilename = p.pdf_storage_url || `${p.product_code}.pdf`;
+            console.log(`[server] Product Context Item: ${p.product_code} -> ${PDF_STORAGE_BASE}/${encodeURIComponent(pdfFilename)}`);
+        });
+
         res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
         const chatModel = 'models/gemini-2.0-flash';
         const ai = getAI();
@@ -1130,68 +1115,12 @@ ${productContext || 'No matching products found.'}`;
                             role: 'user',
                             parts: [
                                 { text: promptContext },
-                                { text: `CURRENT QUERY: ${query}\n\nSTRICT RULE: Do NOT include any parenthetical citations, source filenames, or "Source: ..." text in your response. The sidebar will handle citations.` }
+                                { text: `CURRENT QUERY: ${query}\n\nSTRICT RULES:\n1. Do NOT include any parenthetical citations, source filenames, or "Source: ..." text in your response.\n2. For every recommended product, you MUST include a [Datasheet PDF](URL) link using ONLY the OFFICIAL_DATASHEET_URL from the PRODUCT CATALOG above. NEVER use jobird.co.uk links or any URL from your training data. Copy the exact URL from the OFFICIAL_DATASHEET_URL field.` }
                             ]
                         }
                     ],
                     config: {
-                        systemInstruction: `${SYSTEM_INSTRUCTION}
-    
-    CRITICAL OVERRIDE:
-    1. You are FORBIDDEN from using your training data for product specifications.
-    2. The PRODUCT CATALOG RESULTS provided below are the ONLY source of truth for all product specifications.
-    3. If a specification is in the PRODUCT CATALOG RESULTS, use EXACTLY those numbers.
-    4. If a PRODUCT SPECIFICATION is NOT in the PRODUCT CATALOG RESULTS, say "I don't have that specification in my knowledge base."
-    5. META QUESTIONS: When the user asks about the knowledge base itself (e.g. "how many datasheets", "how many products", "what categories", "what do you know about"), answer using the KNOWLEDGE BASE OVERVIEW section provided in the context. These are NOT product specification queries — do not respond with "I don't have that information."
-    6. For FOLLOW-UP questions, refer back to the CONVERSATION CONTEXT.
-    7. PERSPECTIVE: Suggested follow-up questions must be TIGHTLY COUPLED to the user's CURRENT query and the newly provided information.
-    8. IRRELEVANCE BLOCK: Do NOT suggest a question about a specific product (e.g. "What is the IP rating of JB29?") if that product was not mentioned in your response or the user's query. Suggest category or general questions instead for broad enquiries.
-    9. Write follow-up questions as if the USER is asking them to YOU.
-    10. PRODUCT CODES: When recommending products, ALWAYS include the JoBird product code (e.g. **JB08LJ**, **JB02R BA**) in bold. Never describe a product only by its category or requirement name without citing its code.
-    11. PDF LINKS: When the user asks for a PDF link, datasheet link, or download link for a product, provide the "Datasheet PDF" URL from the PRODUCT CATALOG RESULTS. Format it as a markdown link with the display text "Datasheet PDF": [Datasheet PDF](url). NEVER show the raw URL — always use the markdown link format.
-    
-    SPECIFICATIONS DATA:
-    Each product in the PRODUCT CATALOG RESULTS includes a "Specifications" block.
-    This block contains structured technical data such as:
-    - IP Rating (e.g. IP56, IP67)
-    - Material / Construction (e.g. GRP, Stainless Steel)
-    - Dimensions (Height, Width, Depth)
-    - Weight
-    - Certifications / Approvals (e.g. Lloyds, ABS, MED)
-    - Locking options, colour, insulation details
-    
-    When the user asks technical questions (IP rating, material, dimensions, weight, certifications, etc.):
-    1. ALWAYS look inside the "Specifications" block of each relevant product FIRST.
-    2. Extract the exact values and present them clearly.
-    3. For comparison questions (e.g. "Do they share the same IP rating?"), extract the spec from EACH product and compare explicitly.
-    4. Only say you don't know if the specific field is genuinely absent from all relevant products' Specifications blocks.
-    
-    RESPONSE FORMATTING:
-
-    A) MULTI-PRODUCT COMPARISONS (2+ products):
-    You MUST use a Markdown table. Example:
-    
-    | Product | Weight | IP Rating | Material |
-    |---------|--------|-----------|----------|
-    | **JB08LJ** | 33 kg | IP56 | GRP |
-    | **JB10.600LJS** | 24 kg | IP56 | GRP |
-    
-    Table rules:
-    - Always wrap product codes in **bold** inside the table.
-    - Column headers should be clear and concise.
-    - If a value is not available, write "N/A" in the cell.
-    
-    B) SINGLE-PRODUCT SPECIFICATIONS:
-    Use bullet points with bold headings. Example:
-    - **Weight:** 33 kg
-    - **IP Rating:** IP56
-    - **Material:** GRP Composite
-    - **Dimensions (H x W x D):** 1140 mm x 725 mm x 535 mm
-    
-    C) UNITS:
-    Always separate the number from the unit with a space for readability:
-    - Correct: 33 kg, 1140 mm, 56 litres
-    - Incorrect: 33kg, 1140mm, 56litres`,
+                        systemInstruction: SYSTEM_INSTRUCTION,
                         temperature: 0.0
                     }
                 }),
@@ -1234,12 +1163,13 @@ ${productContext || 'No matching products found.'}`;
         }
 
         // Extract citations from the response and filter datasheets
-        console.log('[server] Extracting citations for final event...');
+        console.log(`[server] Extracting citations for final event... Response length: ${fullText.length}`);
         const citedDatasheets = filterDatasheetsByCitations(fullText, referencedDatasheets, searchResults);
 
         // Final safety strip for citations
         const finalOutput = stripCitations(fullText);
         if (!requestDone) {
+            console.log(`[server] Sending 'done' payload with ${citedDatasheets.length} datasheets`);
             res.write(`data: ${JSON.stringify({ type: 'done', text: finalOutput, datasheets: citedDatasheets })}\n\n`);
             res.end();
         }
@@ -1333,6 +1263,7 @@ app.get('/api/diag', async (req, res) => {
         ai_initialized: !!aiInstance,
         supabase_initialized: !!supabaseInstance,
         supabase_test: supabaseTest,
+        pdf_storage_base: PDF_STORAGE_BASE,
         server_time: new Date().toISOString()
     });
 });
@@ -1344,7 +1275,7 @@ app.get('/api/test-ai', async (req, res) => {
         if (!ai) return res.status(500).json({ error: 'AI not configured' });
 
         const result = await ai.models.generateContent({
-            model: 'models/gemini-3-flash-preview',
+            model: 'models/gemini-2.0-flash',
             contents: 'Say "AI is working"'
         });
         res.json({ result: result.text });
@@ -1353,41 +1284,6 @@ app.get('/api/test-ai', async (req, res) => {
     }
 });
 
-// Text-to-speech endpoint
-app.post('/api/speech', async (req, res) => {
-    try {
-        const { text } = req.body;
-
-        if (!text) {
-            return res.status(400).json({ error: 'Text is required' });
-        }
-
-        const ai = getAI();
-        if (!ai) {
-            return res.status(500).json({ error: 'AI service not configured' });
-        }
-
-        const response = await ai.models.generateContent({
-            model: 'models/gemini-3-flash-preview',
-            contents: [{ parts: [{ text: `Recommendation: ${text}` }] }],
-            config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Kore' }
-                    }
-                }
-            }
-        });
-
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        res.json({ audio: base64Audio });
-
-    } catch (error) {
-        console.error('[server] Speech error:', error);
-        res.status(500).json({ error: error.message || 'Internal server error' });
-    }
-});
 
 // Serve static files from dist
 app.use(express.static(path.join(__dirname, '..', 'dist')));

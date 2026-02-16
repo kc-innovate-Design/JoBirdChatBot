@@ -1,48 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Message, CabinetModel, SOP, SalesFeedback, DatasheetReference } from '../types';
-import { getSelectionResponse, getSelectionResponseStream, generateSelectionSpeech, getAI } from '../geminiService';
-import { SYSTEM_INSTRUCTION } from '../constants';
-import { Modality, LiveServerMessage, Blob } from '@google/genai';
+import { getSelectionResponse, getSelectionResponseStream } from '../geminiService';
 
-// Manually implement base64 encoding/decoding as per requirements
-function encode(bytes: Uint8Array) {
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
 
 interface ChatInterfaceProps {
   catalog: CabinetModel[];
@@ -50,6 +10,9 @@ interface ChatInterfaceProps {
   onSubmitFeedback: (feedback: SalesFeedback) => void;
   selectedModel: CabinetModel | null;
   onOpenAdmin: () => void;
+  initialMessages?: Message[];
+  initialDatasheets?: DatasheetReference[];
+  onSessionUpdate?: (messages: Message[], datasheets?: DatasheetReference[]) => void;
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -59,9 +22,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState<number | null>(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [referencedDatasheets, setReferencedDatasheets] = useState<DatasheetReference[]>(initialDatasheets);
+  const [referencedDatasheets, setReferencedDatasheets] = useState<DatasheetReference[]>(
+    [...(initialDatasheets || [])].sort((a, b) => a.filename.localeCompare(b.filename))
+  );
 
   const [feedbackTask, setFeedbackTask] = useState('');
   const [feedbackIssue, setFeedbackIssue] = useState('');
@@ -125,13 +89,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           const lastIdx = updated.length - 1;
           if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
             // Check for follow-up questions in the text
+            // Primary format: [[FOLLOWUP]] Q1 | Q2 | Q3
             const parts = text.split('[[FOLLOWUP]]');
-            const cleanText = parts[0].trim();
+            let cleanText = parts[0].trim();
             if (parts.length > 1) {
               const questions = parts[1].split('|').map(q => q.trim()).filter(Boolean);
               setFollowUpQuestions(questions);
             } else {
-              setFollowUpQuestions([]);
+              // Fallback: [[Q1]] | [[Q2]] | [[Q3]] format
+              const bracketPattern = /\[\[([^\]]+)\]\]/g;
+              const bracketMatches = [...text.matchAll(bracketPattern)];
+              if (bracketMatches.length >= 2) {
+                const questions = bracketMatches.map(m => m[1].trim()).filter(Boolean);
+                setFollowUpQuestions(questions);
+                // Remove the bracket questions from the display text
+                cleanText = text.replace(/\[\[[^\]]+\]\]/g, '').replace(/\s*\|\s*/g, ' ').trim();
+              } else {
+                setFollowUpQuestions([]);
+              }
             }
             updated[lastIdx] = { ...updated[lastIdx], content: cleanText || 'Generating response...' };
           }
@@ -164,7 +139,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   merged.push(ds);
                 }
               });
-              return merged;
+              // Sort alphabetically by filename
+              return merged.sort((a, b) => a.filename.localeCompare(b.filename));
             });
             onSessionUpdate(finalHistory, pendingDatasheets);
           } else {
@@ -256,48 +232,67 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const formatContent = (content: string) => {
-    // Render markdown links [text](url) as clickable <a> elements
-    const renderLinks = (text: string): React.ReactNode[] => {
-      const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
-      const parts: React.ReactNode[] = [];
-      let lastIndex = 0;
-      let match;
-      while ((match = linkPattern.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-          parts.push(text.substring(lastIndex, match.index));
-        }
-        parts.push(
-          <a key={`link-${match.index}`} href={match[2]} target="_blank" rel="noopener noreferrer"
-            style={{ color: '#D94637', textDecoration: 'underline', fontWeight: 600 }}>
-            {match[1]}
-          </a>
-        );
-        lastIndex = match.index + match[0].length;
+  // Render markdown links [text](url) as clickable <a> elements
+  const renderLinks = (text: string): React.ReactNode[] => {
+    const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = linkPattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
       }
-      if (lastIndex < text.length) {
-        parts.push(text.substring(lastIndex));
-      }
-      return parts.length > 0 ? parts : [text];
-    };
+      parts.push(
+        <a key={`link-${match.index}`} href={match[2]} target="_blank" rel="noopener noreferrer"
+          style={{ color: '#D94637', textDecoration: 'underline', fontWeight: 600 }}>
+          {match[1]}
+        </a>
+      );
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
+    }
+    return parts.length > 0 ? parts : [text];
+  };
 
-    // Highlight product codes in text (e.g., JB10.600LJ, JB02HR, RS550)
-    const highlightProductCodes = (text: string) => {
-      // Known non-product-code patterns to exclude (IP ratings, standards, etc.)
-      const nonProductCodes = /^(IP\d+|EN\d+|ISO\d+|BS\d+|IEC\d+|UL\d+|CE\d+|ATEX\d+|MED\d+)$/i;
-      // First render any markdown links, then highlight product codes in non-link parts
-      const linkedParts = renderLinks(text);
-      return linkedParts.flatMap((part, li) => {
-        if (typeof part !== 'string') return [part]; // already a React element (link)
-        const codeParts = part.split(/\b([A-Z]{2,3}[\d.]+[A-Z\d]*)\b/);
-        return codeParts.map((cp, i) => {
-          if (/^[A-Z]{2,3}[\d.]+[A-Z\d]*$/.test(cp) && !nonProductCodes.test(cp)) {
-            return <strong key={`${li}-${i}`} style={{ color: '#D94637', fontWeight: 900 }}>{cp}</strong>;
-          }
-          return cp;
-        });
+  // Highlight product codes and "Feedback" word in text
+  const highlightSpecialTerms = (text: string) => {
+    // Known non-product-code patterns to exclude (IP ratings, standards, etc.)
+    const nonProductCodes = /^(IP\d+|EN\d+|ISO\d+|BS\d+|IEC\d+|UL\d+|CE\d+|ATEX\d+|MED\d+)$/i;
+    // First render any markdown links, then highlight terms in non-link parts
+    const linkedParts = renderLinks(text);
+    return linkedParts.flatMap((part, li) => {
+      if (typeof part !== 'string') return [part]; // already a React element (link)
+
+      // Split by product codes OR the word "feedback" (case-insensitive)
+      const combinedParts = part.split(/\b([A-Z]{2,3}[\d.]+[A-Z\d]*)\b|\b(feedback)\b/i);
+
+      return combinedParts.map((cp, i) => {
+        if (!cp) return null;
+        // Check for product code match
+        if (/^[A-Z]{2,3}[\d.]+[A-Z\d]*$/.test(cp) && !nonProductCodes.test(cp)) {
+          return <strong key={`${li}-${i}`} style={{ color: '#D94637', fontWeight: 900 }}>{cp}</strong>;
+        }
+        // Check for "feedback" match
+        if (cp.toLowerCase() === 'feedback') {
+          return (
+            <button
+              key={`${li}-${i}`}
+              onClick={() => setShowFeedbackModal(true)}
+              className="text-[#D94637] font-black underline hover:text-red-700 transition-colors uppercase tracking-tight"
+              style={{ fontSize: 'inherit', verticalAlign: 'baseline', border: 'none', background: 'none', padding: 0, cursor: 'pointer' }}
+            >
+              {cp}
+            </button>
+          );
+        }
+        return cp;
       });
-    };
+    });
+  };
+
+  const formatContent = (content: string) => {
 
     // Return segments of bolded or colored text based on markdown-like structure
     // First, split content into table blocks and non-table blocks
@@ -368,7 +363,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           const inner = part.replace(/\*\*/g, '');
                           return <strong key={pi} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
                         }
-                        return <React.Fragment key={pi}>{highlightProductCodes(part)}</React.Fragment>;
+                        return <React.Fragment key={pi}>{highlightSpecialTerms(part)}</React.Fragment>;
                       })}
                     </td>
                   ))}
@@ -406,7 +401,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       const inner = part.replace(/\*\*/g, '');
                       return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
                     }
-                    return <React.Fragment key={i}>{highlightProductCodes(part)}</React.Fragment>;
+                    return <React.Fragment key={i}>{highlightSpecialTerms(part)}</React.Fragment>;
                   })}</span>
                 </div>
               );
@@ -425,7 +420,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     const inner = part.replace(/\*\*/g, '');
                     return <strong key={i} style={{ color: '#D94637', fontWeight: 900 }}>{inner}</strong>;
                   }
-                  return <React.Fragment key={i}>{highlightProductCodes(part)}</React.Fragment>;
+                  return <React.Fragment key={i}>{highlightSpecialTerms(part)}</React.Fragment>;
                 })}
               </p>
             );
@@ -436,7 +431,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   return (
-    <div className="flex gap-4 h-[638px]">
+    <div className="flex gap-4" style={{ height: 'calc(100vh - 120px)' }}>
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-white border border-slate-200 shadow-2xl relative">
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4 bg-white custom-scrollbar">
@@ -450,7 +445,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <div className="relative group">
                   <div className={`py-2 px-4 border ${msg.role === 'user' ? 'bg-slate-50 border-slate-100 text-slate-600' : 'bg-white border-slate-200 shadow-sm text-slate-800'
                     }`}>
-                    {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[15px] font-bold">{msg.content}</div>}
+                    {msg.role === 'assistant' ? formatContent(msg.content) : <div className="text-[15px] font-bold">{highlightSpecialTerms(msg.content)}</div>}
                   </div>
                 </div>
               </div>
