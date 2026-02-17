@@ -92,6 +92,8 @@ Answer-First: Start with a bold recommendation or category "menu".
 
 Clean Table Columns: Use exactly three columns: Spec | User Requirement | JoBird Model Specs.
 
+Datasheet Links: ONLY use the OFFICIAL_DATASHEET_URL provided in the product catalog context. NEVER fabricate or guess URLs. NEVER link to jobird.co.uk or jobird.com.
+
 3. RESPONSE MODES
 MODE A: DISCOVERY (Missing Specs / Broad Search)
 Categorize: Group the range into 3 size "buckets" (e.g., Compact 8-12, Standard 20-30, Large 40+).
@@ -656,11 +658,43 @@ app.post('/api/chat/stream', async (req, res) => {
         console.log(`[server] Follow-up check: isFollowUp=${isFollowUp}, needsSpecData=${needsSpecData}, queryContainsProductCode=${queryContainsProductCode}, historyProducts=${historyProductCodes.length}, hasHistory=${hasHistory}`);
 
         if (isFollowUp && !uploadedContext && !needsSpecData && !queryContainsProductCode) {
-            // === FAST PATH: Skip search entirely ===
-            // Only for truly conversational follow-ups with no product codes or data requests
+            // === FAST PATH: Skip full search but still fetch history products for sidebar ===
             console.log('[server] PATH: FAST (follow-up, no spec data needed, no product codes)');
             res.write('data: ' + JSON.stringify({ type: 'status', message: 'Generating response...' }) + '\n\n');
             isFollowUpPath = true;
+
+            // Fetch products mentioned in conversation history so sidebar stays populated
+            if (historyProductCodes.length > 0) {
+                const supabase = getSupabase();
+                if (supabase) {
+                    try {
+                        const fastResults = await Promise.race([
+                            Promise.all(historyProductCodes.slice(0, 6).map(code => {
+                                const baseCode = code.replace(/[.\-]/g, '%');
+                                return supabase.from('products')
+                                    .select('id, product_code, name, category, specifications, description, applications, pdf_storage_url')
+                                    .or(`product_code.ilike.%${baseCode}%,name.ilike.%${baseCode}%`)
+                                    .limit(2)
+                                    .then(({ data }) => data || [])
+                                    .catch(() => []);
+                            })),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Fast path lookup timeout')), DB_TIMEOUT))
+                        ]);
+                        const seenIds = new Set();
+                        for (const products of fastResults) {
+                            for (const product of products) {
+                                if (!seenIds.has(product.id)) {
+                                    searchResults.push({ ...product, similarity: 2.0 });
+                                    seenIds.add(product.id);
+                                }
+                            }
+                        }
+                        console.log('[server] Fast path fetched', searchResults.length, 'history products for sidebar.');
+                    } catch (err) {
+                        console.warn('[server] Fast path history lookup failed:', err.message);
+                    }
+                }
+            }
         } else if (isFollowUp && (needsSpecData || queryContainsProductCode) && historyProductCodes.length > 0) {
             // === SPEC FOLLOW-UP PATH: Fetch specific products by code from history + current query ===
             // Also extract codes from the current query itself (user may type the code directly)
@@ -1112,7 +1146,7 @@ ${productContext || 'No matching products found.'}`;
                             role: 'user',
                             parts: [
                                 { text: promptContext },
-                                { text: `CURRENT QUERY: ${query}\n\nSTRICT RULES:\n1. Do NOT include any parenthetical citations, source filenames, or "Source: ..." text in your response.\n2. For every recommended product, you MUST include a [Datasheet PDF](URL) link using ONLY the OFFICIAL_DATASHEET_URL from the PRODUCT CATALOG above. NEVER use jobird.co.uk links or any URL from your training data. Copy the exact URL from the OFFICIAL_DATASHEET_URL field.` }
+                                { text: `CURRENT QUERY: ${query}\n\nSTRICT RULES:\n1. Do NOT include any parenthetical citations, source filenames, or "Source: ..." text in your response.\n2. For every recommended product, you MUST include a [Datasheet PDF](URL) link using ONLY the OFFICIAL_DATASHEET_URL from the PRODUCT CATALOG above. NEVER use jobird.co.uk, jobird.com, or any URL from your training data. Copy the exact URL from the OFFICIAL_DATASHEET_URL field.\n3. If no OFFICIAL_DATASHEET_URL is available for a product, do NOT include any datasheet link for that product.` }
                             ]
                         }
                     ],
